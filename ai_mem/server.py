@@ -1,31 +1,33 @@
 #!/usr/bin/env python3
-"""ai-mem — semantic memory MCP server backed by ChromaDB.
-
-Collections are project-scoped slugs ('exodeck', 'aide', …).
-The default collection is 'workspace' — suitable for most use cases.
-
-Data persists at $AI_MEM_PATH (default: ~/.local/share/ai-mem/).
-"""
+"""ai-mem MCP server — thin adapter over the application layer."""
 import asyncio
 import json
 import os
 from pathlib import Path
 
-import chromadb
 import mcp.types as types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
+from ai_mem.application.add_memory import AddMemoryUseCase
+from ai_mem.application.cleanup_memory import CleanupMemoryUseCase
+from ai_mem.application.delete_memory import DeleteMemoryUseCase
+from ai_mem.application.list_collections import ListCollectionsUseCase
+from ai_mem.application.query_memory import QueryMemoryUseCase
+from ai_mem.infrastructure.chroma_repository import ChromaMemoryRepository
+
 DEFAULT_COLLECTION = "workspace"
-DB_PATH = Path(os.environ.get("AI_MEM_PATH", Path.home() / ".local" / "share" / "ai-mem"))
-DB_PATH.mkdir(parents=True, exist_ok=True)
 
-_client = chromadb.PersistentClient(path=str(DB_PATH))
+_db_path = Path(os.environ.get("AI_MEM_PATH", Path.home() / ".local" / "share" / "ai-mem"))
+_repo = ChromaMemoryRepository(_db_path)
+
+_add = AddMemoryUseCase(_repo)
+_query = QueryMemoryUseCase(_repo)
+_list = ListCollectionsUseCase(_repo)
+_delete = DeleteMemoryUseCase(_repo)
+_cleanup = CleanupMemoryUseCase(_repo)
+
 server = Server("ai-mem")
-
-
-def _col(name: str):
-    return _client.get_or_create_collection(name)
 
 
 @server.list_tools()
@@ -36,30 +38,16 @@ async def list_tools() -> list[types.Tool]:
             description=(
                 "Store or update information in memory. "
                 f"Leave 'collection' empty to use the default ('{DEFAULT_COLLECTION}'). "
-                "Use project-slug names for project-specific memory: 'exodeck', 'aide', etc."
+                "Set 'ttl_days' to expire the entry automatically (e.g. 30 for one month)."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "documents": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Text entries to store",
-                    },
-                    "ids": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Unique ID for each entry (used for updates)",
-                    },
-                    "collection": {
-                        "type": "string",
-                        "description": f"Collection name (default: '{DEFAULT_COLLECTION}')",
-                    },
-                    "metadatas": {
-                        "type": "array",
-                        "items": {"type": "object"},
-                        "description": "Optional metadata per entry (e.g. tags, date)",
-                    },
+                    "documents": {"type": "array", "items": {"type": "string"}, "description": "Text entries to store"},
+                    "ids": {"type": "array", "items": {"type": "string"}, "description": "Unique ID per entry (used for updates)"},
+                    "collection": {"type": "string", "description": f"Collection name (default: '{DEFAULT_COLLECTION}')"},
+                    "metadatas": {"type": "array", "items": {"type": "object"}, "description": "Optional metadata per entry"},
+                    "ttl_days": {"type": "number", "description": "Optional TTL in days — entry is deleted by mem_cleanup after expiry"},
                 },
                 "required": ["documents", "ids"],
             },
@@ -68,24 +56,16 @@ async def list_tools() -> list[types.Tool]:
             name="mem_query",
             description=(
                 "Search memory semantically. Returns ranked results with similarity scores. "
-                f"Leave 'collection' empty to search the default ('{DEFAULT_COLLECTION}')."
+                f"Leave 'collection' empty to search the default ('{DEFAULT_COLLECTION}'). "
+                "Use 'max_age_days' to exclude older entries."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Natural language search query",
-                    },
-                    "collection": {
-                        "type": "string",
-                        "description": f"Collection to search (default: '{DEFAULT_COLLECTION}')",
-                    },
-                    "n_results": {
-                        "type": "integer",
-                        "default": 5,
-                        "description": "Number of results to return",
-                    },
+                    "query": {"type": "string", "description": "Natural language search query"},
+                    "collection": {"type": "string", "description": f"Collection to search (default: '{DEFAULT_COLLECTION}')"},
+                    "n_results": {"type": "integer", "default": 5, "description": "Number of results to return"},
+                    "max_age_days": {"type": "number", "description": "Only return entries created within this many days"},
                 },
                 "required": ["query"],
             },
@@ -97,22 +77,26 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="mem_delete",
+            description="Delete entries from memory by ID. Omit 'ids' to drop the entire collection.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "collection": {"type": "string", "description": f"Collection name (default: '{DEFAULT_COLLECTION}')"},
+                    "ids": {"type": "array", "items": {"type": "string"}, "description": "Entry IDs to delete (omit to drop entire collection)"},
+                },
+                "required": [],
+            },
+        ),
+        types.Tool(
+            name="mem_cleanup",
             description=(
-                "Delete entries from memory by ID. "
-                "Omit 'ids' to drop the entire collection."
+                "Delete all expired entries (those with a ttl_days set on mem_add that have passed). "
+                "Omit 'collection' to clean all collections."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "collection": {
-                        "type": "string",
-                        "description": f"Collection name (default: '{DEFAULT_COLLECTION}')",
-                    },
-                    "ids": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Entry IDs to delete (omit to drop entire collection)",
-                    },
+                    "collection": {"type": "string", "description": "Collection to clean (omit for all)"},
                 },
                 "required": [],
             },
@@ -125,51 +109,41 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     collection = arguments.get("collection") or DEFAULT_COLLECTION
 
     if name == "mem_add":
-        col = _col(collection)
-        col.upsert(
+        count = _add.execute(
+            collection=collection,
             documents=arguments["documents"],
             ids=arguments["ids"],
             metadatas=arguments.get("metadatas"),
+            ttl_days=arguments.get("ttl_days"),
         )
-        count = len(arguments["documents"])
         return [types.TextContent(type="text", text=f"Stored {count} entry/entries in '{collection}'.")]
 
     if name == "mem_query":
-        col = _col(collection)
-        n = arguments.get("n_results", 5)
-        results = col.query(query_texts=[arguments["query"]], n_results=n)
-        docs = results["documents"][0]
-        ids = results["ids"][0]
-        metas = (results.get("metadatas") or [[]])[0]
-        distances = (results.get("distances") or [[]])[0]
-        empty_meta: dict = {}
-        out = [
-            {
-                "rank": i + 1,
-                "id": id_,
-                "score": round(1.0 - dist, 4),
-                "metadata": meta or empty_meta,
-                "text": doc,
-            }
-            for i, (doc, id_, meta, dist) in enumerate(
-                zip(docs, ids, metas or [empty_meta] * len(docs), distances)
-            )
-        ]
+        results = _query.execute(
+            collection=collection,
+            query=arguments["query"],
+            n_results=arguments.get("n_results", 5),
+            max_age_days=arguments.get("max_age_days"),
+        )
+        out = [{"rank": r.rank, "id": r.id, "score": r.score, "metadata": r.metadata, "text": r.text} for r in results]
         return [types.TextContent(type="text", text=json.dumps(out, indent=2, ensure_ascii=False))]
 
     if name == "mem_list":
-        cols = _client.list_collections()
-        result = [{"name": c.name, "count": c.count()} for c in cols]
-        return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+        cols = _list.execute()
+        return [types.TextContent(type="text", text=json.dumps([{"name": c.name, "count": c.count} for c in cols], indent=2))]
 
     if name == "mem_delete":
-        ids = arguments.get("ids")
-        if ids:
-            col = _col(collection)
-            col.delete(ids=ids)
-            return [types.TextContent(type="text", text=f"Deleted {len(ids)} entry/entries from '{collection}'.")]
-        _client.delete_collection(collection)
-        return [types.TextContent(type="text", text=f"Dropped collection '{collection}'.")]
+        affected = _delete.execute(collection=collection, ids=arguments.get("ids"))
+        if affected == -1:
+            return [types.TextContent(type="text", text=f"Dropped collection '{collection}'.")]
+        return [types.TextContent(type="text", text=f"Deleted {affected} entry/entries from '{collection}'.")]
+
+    if name == "mem_cleanup":
+        col_arg = arguments.get("collection")
+        result = _cleanup.execute(col_arg)
+        total = sum(result.values())
+        detail = json.dumps(result, indent=2)
+        return [types.TextContent(type="text", text=f"Cleaned up {total} expired entry/entries.\n{detail}")]
 
     raise ValueError(f"Unknown tool: {name}")
 
