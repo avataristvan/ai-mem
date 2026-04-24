@@ -44,11 +44,22 @@ def register_claude():
     mcp_path = HOME / ".claude.json"
     print(f"\n🤖 Registering with Claude Code ({mcp_path})...")
 
+    INSTRUCTIONS = (
+        "ai-mem is a persistent semantic memory store. "
+        "When these tools are available, ai-mem is installed and active. "
+        "Use mem_query proactively whenever the user asks about plans, prior decisions, context, or "
+        "anything that may have been stored across sessions (e.g. 'what's next?', 'what did we decide?', "
+        "'what's planned?'). "
+        "At session start the current_focus entry is injected automatically — treat it as working context. "
+        "Use mem_add to persist important decisions, plans, or session highlights so future sessions have context."
+    )
+
     def update_mcp(data: dict) -> dict:
         data.setdefault("mcpServers", {})["ai-mem"] = {
             "type": "stdio",
             "command": python_exe(),
             "args": ["-m", SERVER_MODULE],
+            "instructions": INSTRUCTIONS,
         }
         return data
 
