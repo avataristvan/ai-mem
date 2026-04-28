@@ -33,13 +33,16 @@ class ChromaMemoryRepository:
         max_age_days: float | None,
     ) -> list[QueryResult]:
         col = self._col(collection)
+        count = col.count()
+        if count == 0:
+            return []
 
         where: dict | None = None
         if max_age_days is not None:
             cutoff = datetime.now(tz=timezone.utc).timestamp() - max_age_days * 86400
             where = {"created_at": {"$gte": cutoff}}
 
-        kwargs: dict = {"query_texts": [text], "n_results": min(n_results, col.count() or 1)}
+        kwargs: dict = {"query_texts": [text], "n_results": min(n_results, count)}
         if where:
             kwargs["where"] = where
 
@@ -58,6 +61,22 @@ class ChromaMemoryRepository:
                 metadata=meta or {},
             )
             for i, (doc, id_, meta, dist) in enumerate(zip(docs, ids, metas, distances))
+        ]
+
+    def get_by_ids(self, collection: str, ids: list[str]) -> list[MemoryEntry]:
+        try:
+            col = self._client.get_collection(collection)
+        except Exception:
+            return []
+
+        result = col.get(ids=ids)
+        result_ids = result.get("ids") or []
+        result_docs = result.get("documents") or []
+        result_metas = result.get("metadatas") or [{}] * len(result_ids)
+
+        return [
+            MemoryEntry(id=id_, text=doc, metadata=meta or {})
+            for id_, doc, meta in zip(result_ids, result_docs, result_metas)
         ]
 
     def list_collections(self) -> list[CollectionInfo]:
@@ -79,6 +98,43 @@ class ChromaMemoryRepository:
 
         now_ts = datetime.now(tz=timezone.utc).timestamp()
         result = col.get(where={"expires_at": {"$lte": now_ts}})
+        ids = result.get("ids") or []
+        if ids:
+            col.delete(ids=ids)
+        return len(ids)
+
+    def record_access(self, collection: str, ids: list[str]) -> None:
+        if not ids:
+            return
+        try:
+            col = self._client.get_collection(collection)
+        except Exception:
+            return
+
+        existing = col.get(ids=ids)
+        existing_ids = existing.get("ids") or []
+        existing_metas = existing.get("metadatas") or []
+        if not existing_ids:
+            return
+
+        now_ts = datetime.now(tz=timezone.utc).timestamp()
+        new_metas = []
+        for meta in existing_metas:
+            m = dict(meta or {})
+            m["last_accessed_at"] = now_ts
+            m["access_count"] = int(m.get("access_count", 0)) + 1
+            new_metas.append(m)
+
+        col.update(ids=existing_ids, metadatas=new_metas)
+
+    def delete_stale(self, collection: str, stale_after_days: float) -> int:
+        try:
+            col = self._client.get_collection(collection)
+        except Exception:
+            return 0
+
+        cutoff = datetime.now(tz=timezone.utc).timestamp() - stale_after_days * 86400
+        result = col.get(where={"last_accessed_at": {"$lt": cutoff}})
         ids = result.get("ids") or []
         if ids:
             col.delete(ids=ids)

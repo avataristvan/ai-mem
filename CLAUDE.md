@@ -1,44 +1,46 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Agent-facing supplement to README.md. Contains dev commands, architecture navigation, and non-obvious conventions.
 
-## Commands
+## Dev Commands
 
 ```bash
-# Install package in editable mode
-pip install -e .
-
-# Run the MCP server directly (for testing)
-python3 -m ai_mem.server
-
-# Run the installer (registers with Claude Code / Gemini CLI / Cursor)
-python3 install.py
-
-# Run the SessionStart hook manually
-python3 -m ai_mem.hook
+pip install -e .            # editable install (no ML)
+pip install -e ".[ml]"      # with PyTorch re-ranker
+python3 -m ai_mem.server    # run MCP server directly
+python3 install.py          # register with Claude Code / Gemini CLI / Cursor
+python3 -m ai_mem.hook      # run SessionStart hook manually
+python3 -m ai_mem.stop_hook # run Stop hook manually (from a git repo dir)
+python -m pytest tests/ -v  # run tests
 ```
-
-There is no test suite yet. The package is installed editable (`pip install -e .`) so changes take effect immediately without reinstall.
 
 ## Architecture
 
-Capability-centric DDD in three layers:
+Capability-centric DDD — three layers, no upward imports.
 
-**`ai_mem/domain/memory.py`** — pure entities (`MemoryEntry`, `QueryResult`, `CollectionInfo`) and the `MemoryRepository` Protocol. No I/O, no ChromaDB imports.
+**Domain** (`ai_mem/domain/`) — pure contracts, no I/O, no torch.
+- `memory.py` — `MemoryEntry`, `QueryResult`, `CollectionInfo`, `MemoryRepository` Protocol
+- `learning.py` — `RankingFeatures` (frozen, 10-element `as_vector()`), `TrainingExample`, `TrainingMetrics`, `RankerScope`, `LearnedRanker` Protocol, `TrainingBufferRepository` Protocol, `RankerProvider` Protocol
 
-**`ai_mem/application/`** — one use case per file (`AddMemoryUseCase`, `QueryMemoryUseCase`, `DeleteMemoryUseCase`, `ListCollectionsUseCase`, `CleanupMemoryUseCase`). Each takes a `MemoryRepository` in `__init__` and exposes a single `execute()` method. Timestamp injection and TTL calculation live here (in `AddMemoryUseCase`), not in the infra layer.
+**Application** (`ai_mem/application/`) — one use case per file, single `execute()`, deps injected via `__init__`.
+- `QueryMemoryUseCase` — top-20 fetch → build features → `RankerProvider.get()` → re-rank → truncate → track access → record training signal
+- `TrainRankerUseCase` — buffer write, label assignment (7-day window), gradient step, NaN-loss guard, labeled-example eviction
+- `RankerRegistry` — lazy-loads and caches one ranker per scope key; implements `RankerProvider`; lives in application layer because it coordinates infrastructure artifacts
+- `CleanupMemoryUseCase` — returns `CleanupResult(collections: dict[str, CollectionCleanupStats])`
 
-**`ai_mem/infrastructure/chroma_repository.py`** — `ChromaMemoryRepository` implements `MemoryRepository` using ChromaDB's `PersistentClient`. Timestamps are stored as Unix float metadata fields (`created_at`, `expires_at`). The `max_age_days` filter in `query()` and the expired-entry sweep in `delete_expired()` both operate on these fields via ChromaDB `where` clauses.
+**Infrastructure** (`ai_mem/infrastructure/`)
+- `ChromaMemoryRepository` — timestamps as Unix float metadata: `created_at`, `expires_at`, `last_accessed_at`, `access_count`
+- `TorchMicroRanker` — `[10→32→16→1]` MLP, AdamW lr=1e-3, BCE + 0.3×contrastive loss. `seed` param for deterministic init in tests only.
+- `NullRanker` — returns `cosine_similarity` scores unchanged; active when torch is absent
+- `RankerStorage` — implements `TrainingBufferRepository`; JSONL buffer + `.pt` weights per scope key
 
-**`ai_mem/server.py`** — thin MCP adapter. Instantiates the repo and all use cases at module load, wires them to `mem_add` / `mem_query` / `mem_list` / `mem_delete` / `mem_cleanup` tools. Default collection is `"workspace"`.
+**Adapter** (`ai_mem/server.py`) — wires use cases at module load, exposes MCP tools. `hook.py` / `stop_hook.py` are Claude Code lifecycle hooks.
 
-**`ai_mem/hook.py`** — Claude Code `SessionStart` hook. Reads the `current_focus` entry from the `workspace` collection and emits it as `hookSpecificOutput` so Claude sees it at session start. Silent if no entry exists.
+## Key Conventions
 
-**`install.py`** — patches `~/.claude.json` (MCP server registration), `~/.claude/settings.json` (SessionStart + Stop hooks), `~/.gemini/settings.json`, and `~/.cursor/mcp.json`. Idempotent — checks for duplicates before inserting.
-
-## Key conventions
-
-- `mem_add` always injects `created_at` (UTC timestamp). `expires_at` is only added when `ttl_days` is set.
-- `mem_delete` with no `ids` drops the entire collection (returns `-1` from the repo to signal this).
-- The `current_focus` entry (id `"current_focus"` in `workspace`) is a convention used by the Stop hook to remind the agent to update its focus when files change.
-- Data path defaults to `~/.local/share/ai-mem`; override with `AI_MEM_PATH` env var.
+- `mem_delete` with no `ids` drops the entire collection; repo signals this by returning `-1`.
+- `current_focus` (id `"current_focus"`) is the primary context entry per collection. The Stop hook reminds the agent to update it when files changed.
+- `RankingFeatures.cosine_similarity` = `1 - chromadb_distance` (higher = more relevant). Never invert.
+- `_FETCH_K = 20` in `QueryMemoryUseCase` — always over-fetches 20 candidates before re-ranking; `n_results` only controls final truncation.
+- Hybrid mode: buffer and weights files are keyed by **group name**, not collection name. `RankerRegistry.scope_key()` resolves this.
+- `source_collection: str | None` on `TrainingExample` — `None` means the field was absent in older buffer files (backwards-compat on deserialize).

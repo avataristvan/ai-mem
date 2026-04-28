@@ -17,6 +17,17 @@ dependencies = [
   "mcp>=1.0.0"
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0",
+]
+ml = [
+  "torch>=2.0",
+]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ai_mem*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

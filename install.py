@@ -45,13 +45,42 @@ def register_claude():
     print(f"\n🤖 Registering with Claude Code ({mcp_path})...")
 
     INSTRUCTIONS = (
-        "ai-mem is a persistent semantic memory store. "
+        "ai-mem is a persistent semantic memory store for engineers. "
         "When these tools are available, ai-mem is installed and active. "
-        "Use mem_query proactively whenever the user asks about plans, prior decisions, context, or "
-        "anything that may have been stored across sessions (e.g. 'what's next?', 'what did we decide?', "
-        "'what's planned?'). "
-        "At session start the current_focus entry is injected automatically — treat it as working context. "
-        "Use mem_add to persist important decisions, plans, or session highlights so future sessions have context."
+        "\n\n"
+        "MEMORY SCOPING: Memory is scoped to the nearest CLAUDE.md. "
+        "Use the repo collection injected at session start (e.g. 'repo.my-project') for project-specific context, "
+        "'global' for cross-repo knowledge that should surface everywhere, "
+        "and 'workspace' as the fallback when no CLAUDE.md is present. "
+        "Run /mem-init to initialise a new scope. "
+        "\n\n"
+        "WHAT TO MEMORISE — store and retrieve these proactively:\n"
+        "1. Current focus / session handoff: what is being worked on right now (id='current_focus'). "
+        "Update this at the end of every productive session so the next session starts with context.\n"
+        "2. Architectural decisions & rationale: why a design was chosen, what was rejected and why. "
+        "Query before making architectural choices to avoid re-litigating settled decisions.\n"
+        "3. Recurring gotchas & tribal knowledge: API quirks, hardware oddities, build system traps, "
+        "environment setup steps — things that would take time to rediscover. "
+        "Query when hitting a confusing error or environment issue.\n"
+        "4. Backlog / TODO items: tasks with optional TTL so they auto-expire. "
+        "Query at session start ('what's pending?') to resume work naturally.\n"
+        "5. External research: summaries of docs, API behaviour, blog posts, library quirks looked up "
+        "during a session. Query before fetching docs again.\n"
+        "6. Cross-repo / global knowledge: workspace structure, available tools and their quirks, "
+        "personal preferences that apply everywhere. Store in 'global' collection.\n"
+        "7. Debug postmortems: root cause + fix for tricky bugs. "
+        "Query when a similar symptom reappears ('have we seen this before?').\n"
+        "8. Meeting / conversation outcomes: decisions made, blockers raised, people involved. "
+        "Scoped to the relevant repo.\n"
+        "\n"
+        "WHEN TO QUERY: use mem_query proactively whenever the user asks about plans, prior decisions, "
+        "context, errors, or anything that may have been stored — e.g. 'what's next?', "
+        "'what did we decide?', 'have we seen this error?', 'what's the status?'. "
+        "Do not wait to be asked. "
+        "\n\n"
+        "WHEN TO STORE: use mem_add after any decision, fix, or discovery worth remembering. "
+        "Prefer short, precise entries. Use ttl_days for time-bounded items (tasks, reminders). "
+        "Always update current_focus (id='current_focus') at the end of a working session."
     )
 
     def update_mcp(data: dict) -> dict:
@@ -83,16 +112,23 @@ def register_claude():
         return data
 
     # Stop hook → reminds Claude to update current_focus
-    stop_cmd = (
+    OLD_STOP_CMD = (
         "changed=$(git diff --name-only HEAD 2>/dev/null | wc -l); "
         "if [ \"${changed:-0}\" -gt 0 ]; then "
         "echo \"Files changed this session - update current_focus in ai-mem (mem_add id=current_focus).\"; "
         "exit 2; fi"
     )
+    stop_cmd = f"{python_exe()} -m ai_mem.stop_hook 2>/dev/null || true"
 
     def update_stop_hook(data: dict) -> dict:
         hooks = data.setdefault("hooks", {})
         stop_hooks = hooks.setdefault("Stop", [])
+        # Remove the old bash one-liner if present
+        hooks["Stop"] = [
+            entry for entry in stop_hooks
+            if not any(h.get("command") == OLD_STOP_CMD for h in entry.get("hooks", []))
+        ]
+        stop_hooks = hooks["Stop"]
         already = any(
             h.get("command") == stop_cmd
             for entry in stop_hooks
@@ -110,7 +146,44 @@ def register_claude():
         return data
 
     patch_json(settings_path, update_stop_hook)
+    install_mem_init_command()
     print("   ✓ MCP server + SessionStart + Stop hooks registered. Restart Claude Code to activate.")
+
+
+_MEM_INIT_CONTENT = """\
+Initialize or update the ai-mem memory for the current project scope.
+
+1. Detect the active scope:
+   - Find the nearest CLAUDE.md (or agent.md) walking up from the current directory
+   - From that directory run: `git rev-parse --show-toplevel`
+   - Try: `git remote get-url origin` and extract the trailing path component (strip .git suffix)
+   - Fall back to the basename of the git root if no remote
+   - If CLAUDE.md is not at the git root, append the relative subpath (dot-separated)
+   - Sanitize each part: replace characters outside [a-zA-Z0-9._-] with underscore, strip leading/trailing ._-
+   - Collection name: `repo.<scope>` (e.g. `repo.ai-mem`, `repo.mymonorepo.backend`)
+
+2. Tell the user: "Initializing ai-mem for scope '<scope>' using collection 'repo.<scope>'."
+
+3. Ask: "What are you currently working on in this scope? (This becomes current_focus.)"
+
+4. Call mem_add:
+   - documents: [<user's answer>]
+   - ids: ["current_focus"]
+   - collection: "repo.<scope>"
+
+5. Confirm: "Done. Future sessions in this scope will use collection 'repo.<scope>'."
+
+To set a global focus (surfaced in every session across all repos):
+  Call mem_add with ids=["current_focus"] and collection="global".
+"""
+
+
+def install_mem_init_command():
+    commands_dir = HOME / ".claude" / "commands"
+    commands_dir.mkdir(parents=True, exist_ok=True)
+    target = commands_dir / "mem-init.md"
+    target.write_text(_MEM_INIT_CONTENT)
+    print(f"   ✓ /mem-init command installed at {target}")
 
 
 def register_gemini():
