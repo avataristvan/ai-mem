@@ -28,6 +28,13 @@ class QueryResult:
 
 
 @dataclass
+class SplitHint:
+    id: str
+    text_preview: str   # first 80 chars of the original text
+    access_count: int
+
+
+@dataclass
 class CollectionInfo:
     name: str
     count: int

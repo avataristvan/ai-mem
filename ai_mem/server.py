@@ -11,6 +11,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
 from ai_mem.application.add_memory import AddMemoryUseCase
+from ai_mem.application.detect_split_hints import DetectSplitHintsUseCase
 from ai_mem.application.build_features import BuildFeaturesUseCase
 from ai_mem.application.cleanup_memory import CleanupMemoryUseCase
 from ai_mem.application.delete_memory import DeleteMemoryUseCase
@@ -61,6 +62,7 @@ _query = QueryMemoryUseCase(_repo, _track_access, _build_features, _train_ranker
 _list = ListCollectionsUseCase(_repo)
 _delete = DeleteMemoryUseCase(_repo)
 _cleanup = CleanupMemoryUseCase(_repo)
+_detect_split_hints = DetectSplitHintsUseCase()
 
 server = Server("ai-mem")
 
@@ -92,7 +94,9 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="mem_query",
             description=(
-                "Search memory semantically. Returns ranked results with similarity scores. "
+                "Search memory semantically. Returns an object with 'results' (ranked entries with "
+                "similarity scores and confidence) and 'split_hints' (entries with high access_count "
+                "and long text that may benefit from being split into more granular sub-topics). "
                 f"Leave 'collection' empty to search the default ('{DEFAULT_COLLECTION}'). "
                 "Use the repo collection injected at session start (e.g. 'repo.ai-mem') for repo-specific context, "
                 "or 'global' for cross-session general knowledge. "
@@ -184,7 +188,24 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             n_results=arguments.get("n_results", 5),
             max_age_days=arguments.get("max_age_days"),
         )
-        out = [{"rank": r.rank, "id": r.id, "score": r.score, "metadata": r.metadata, "text": r.text} for r in results]
+        split_hints = _detect_split_hints.execute(results)
+        out = {
+            "results": [
+                {
+                    "rank": r.rank,
+                    "id": r.id,
+                    "score": r.score,
+                    "confidence": int(r.metadata.get("access_count", 0)),
+                    "metadata": r.metadata,
+                    "text": r.text,
+                }
+                for r in results
+            ],
+            "split_hints": [
+                {"id": h.id, "text_preview": h.text_preview, "access_count": h.access_count}
+                for h in split_hints
+            ],
+        }
         return [types.TextContent(type="text", text=json.dumps(out, indent=2, ensure_ascii=False))]
 
     if name == "mem_list":
