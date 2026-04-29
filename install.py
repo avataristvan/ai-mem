@@ -111,6 +111,23 @@ def register_claude():
             session_hooks.append({"hooks": [{"type": "command", "command": hook_cmd, "timeout": 10}]})
         return data
 
+    # UserPromptSubmit hook → injects relevant memories before each user message (when ranker is ready)
+    userprompt_cmd = f"{python_exe()} -m ai_mem.userprompt_hook 2>/dev/null || true"
+
+    def update_userprompt_hook(data: dict) -> dict:
+        hooks = data.setdefault("hooks", {})
+        up_hooks = hooks.setdefault("UserPromptSubmit", [])
+        already = any(
+            h.get("command") == userprompt_cmd
+            for entry in up_hooks
+            for h in entry.get("hooks", [])
+        )
+        if not already:
+            up_hooks.append({"hooks": [{"type": "command", "command": userprompt_cmd, "timeout": 8}]})
+        return data
+
+    patch_json(settings_path, update_userprompt_hook)
+
     # Stop hook → reminds Claude to update current_focus
     OLD_STOP_CMD = (
         "changed=$(git diff --name-only HEAD 2>/dev/null | wc -l); "
@@ -147,7 +164,7 @@ def register_claude():
 
     patch_json(settings_path, update_stop_hook)
     install_mem_init_command()
-    print("   ✓ MCP server + SessionStart + Stop hooks registered. Restart Claude Code to activate.")
+    print("   ✓ MCP server + SessionStart + UserPromptSubmit + Stop hooks registered. Restart Claude Code to activate.")
 
 
 _MEM_INIT_CONTENT = """\

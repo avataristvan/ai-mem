@@ -27,7 +27,12 @@ from ai_mem.infrastructure.ranker_storage import RankerStorage
 DEFAULT_COLLECTION = "workspace"
 
 _db_path = Path(os.environ.get("AI_MEM_PATH", Path.home() / ".local" / "share" / "ai-mem"))
-_repo = ChromaMemoryRepository(_db_path)
+_inner_repo = ChromaMemoryRepository(_db_path)
+try:
+    from ai_mem.infrastructure.bm25_repository import BM25MemoryRepository
+    _repo = BM25MemoryRepository(_inner_repo)
+except ImportError:
+    _repo = _inner_repo
 _storage = RankerStorage(_db_path / "rankers")
 
 try:

@@ -5,7 +5,8 @@ Agent-facing supplement to README.md. Contains dev commands, architecture naviga
 ## Dev Commands
 
 ```bash
-pip install -e .            # editable install (no ML)
+pip install -e .            # editable install (no ML, no BM25)
+pip install -e ".[hybrid]"  # with BM25 hybrid search
 pip install -e ".[ml]"      # with PyTorch re-ranker
 python3 -m ai_mem.server    # run MCP server directly
 python3 install.py          # register with Claude Code / Gemini CLI / Cursor
@@ -30,11 +31,16 @@ Capability-centric DDD — three layers, no upward imports.
 
 **Infrastructure** (`ai_mem/infrastructure/`)
 - `ChromaMemoryRepository` — timestamps as Unix float metadata: `created_at`, `expires_at`, `last_accessed_at`, `access_count`
+- `BM25MemoryRepository` — optional wrapper; fetches 50 candidates from inner repo, fuses BM25+cosine scores, returns hybrid-ranked results. Requires `rank_bm25` (`.[hybrid]`). Wired in `server.py` and `userprompt_hook.py` with `try/except ImportError` fallback.
 - `TorchMicroRanker` — `[10→32→16→1]` MLP, AdamW lr=1e-3, BCE + 0.3×contrastive loss. `seed` param for deterministic init in tests only.
 - `NullRanker` — returns `cosine_similarity` scores unchanged; active when torch is absent
 - `RankerStorage` — implements `TrainingBufferRepository`; JSONL buffer + `.pt` weights per scope key
 
 **Adapter** (`ai_mem/server.py`) — wires use cases at module load, exposes MCP tools. `hook.py` / `stop_hook.py` are Claude Code lifecycle hooks.
+
+**Utility modules** (not use-case classes — standalone functions, no DI):
+- `session_stats.py` — `record_injection` / `injection_rate`; rolling 20-session JSONL at `{DB_PATH}/session_stats.json`
+- `repo_seeder.py` — `seed_collection`; reads CLAUDE.md H2 sections → `AddMemoryUseCase`; gated by `injection_rate >= SEED_THRESHOLD (0.60)`
 
 ## Key Conventions
 
@@ -44,3 +50,8 @@ Capability-centric DDD — three layers, no upward imports.
 - `_FETCH_K = 20` in `QueryMemoryUseCase` — always over-fetches 20 candidates before re-ranking; `n_results` only controls final truncation.
 - Hybrid mode: buffer and weights files are keyed by **group name**, not collection name. `RankerRegistry.scope_key()` resolves this.
 - `source_collection: str | None` on `TrainingExample` — `None` means the field was absent in older buffer files (backwards-compat on deserialize).
+- `_try_seed` in `hook.py` checks `collection count == 0` (or not listed) before seeding; wrapped in `try/except` so it is always silent.
+- `hook.py` records global injection stats (`record_injection`) before `_try_seed` so the first-ever session counts toward the threshold.
+- Section splitting in `repo_seeder.py` only includes H2 sections (`## `); the H1 intro block is intentionally excluded.
+- `BM25MemoryRepository` is transparent to the application layer — `QueryResult.score` holds the fused hybrid score, which becomes `RankingFeatures.cosine_similarity` in `BuildFeaturesUseCase`. The app layer never detects the wrapper.
+- Tests that call `upsert` directly must include non-empty metadata (ChromaDB rejects empty dicts). Use `AddMemoryUseCase` in tests to avoid this — it always injects timestamps.

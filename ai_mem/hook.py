@@ -6,6 +6,7 @@ from pathlib import Path
 
 DB_PATH = Path(os.environ.get("AI_MEM_PATH", Path.home() / ".local" / "share" / "ai-mem"))
 FOCUS_ID = "current_focus"
+_STATS_PATH = DB_PATH / "session_stats.json"
 
 
 def _focus_text(get_memory, collection: str) -> str | None:
@@ -16,11 +17,38 @@ def _focus_text(get_memory, collection: str) -> str | None:
         return None
 
 
+def _try_seed(ctx, repo, stats_path: Path) -> None:
+    try:
+        from ai_mem.application.add_memory import AddMemoryUseCase
+        from ai_mem.application.list_collections import ListCollectionsUseCase
+        from ai_mem.repo_context import WORKSPACE_COLLECTION
+        from ai_mem.repo_seeder import seed_collection
+
+        if ctx.collection == WORKSPACE_COLLECTION or ctx.claude_md_dir is None:
+            return
+
+        collections = ListCollectionsUseCase(repo).execute()
+        existing = {c.name: c.count for c in collections}
+        if existing.get(ctx.collection, 0) > 0:
+            return
+
+        add_uc = AddMemoryUseCase(repo)
+        seed_collection(
+            collection=ctx.collection,
+            claude_md_path=ctx.claude_md_dir / "CLAUDE.md",
+            add_uc=add_uc,
+            stats_path=stats_path,
+        )
+    except Exception:
+        pass
+
+
 def main():
     try:
         from ai_mem.application.get_memory import GetMemoryUseCase
         from ai_mem.infrastructure.chroma_repository import ChromaMemoryRepository
         from ai_mem.repo_context import GLOBAL_COLLECTION, WORKSPACE_COLLECTION, detect_repo_context
+        from ai_mem.session_stats import record_injection
     except ImportError:
         return
 
@@ -34,6 +62,13 @@ def main():
 
         repo_focus = _focus_text(get_memory, ctx.collection) if ctx.collection != WORKSPACE_COLLECTION else None
         global_focus = _focus_text(get_memory, GLOBAL_COLLECTION)
+
+        try:
+            record_injection(_STATS_PATH, GLOBAL_COLLECTION, injected=global_focus is not None)
+        except Exception:
+            pass
+
+        _try_seed(ctx, repo, _STATS_PATH)
 
         parts = []
         if repo_focus:
