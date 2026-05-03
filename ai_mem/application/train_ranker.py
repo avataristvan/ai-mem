@@ -47,8 +47,10 @@ class TrainRankerUseCase:
         retrieved: list[QueryResult],
         features: list[RankingFeatures],
         now: float,
+        returned_ids: set[str] | None = None,
     ) -> None:
         scope = self._scope_name(collection)
+        returned = returned_ids or set()
         all_ids = [r.id for r in retrieved]
         examples = [
             TrainingExample(
@@ -57,7 +59,9 @@ class TrainRankerUseCase:
                 retrieved_at=now,
                 co_activated_ids=[id_ for id_ in all_ids if id_ != r.id],
                 source_collection=collection,
-                target_future_access=None,
+                # Entries returned to the caller are immediately labeled positive;
+                # candidates that didn't make the cut wait for the 7-day access window.
+                target_future_access=1.0 if r.id in returned else None,
             )
             for r, feat in zip(retrieved, features)
         ]

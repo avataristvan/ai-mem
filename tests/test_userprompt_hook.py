@@ -17,10 +17,11 @@ from ai_mem import userprompt_hook as hook
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_result(score: float, text: str = "some memory text") -> MagicMock:
+def _make_result(score: float, text: str = "some memory text", entry_id: str | None = None) -> MagicMock:
     r = MagicMock()
     r.score = score
     r.text = text
+    r.id = entry_id
     return r
 
 
@@ -209,3 +210,97 @@ def test_queries_both_global_and_repo_collection(tmp_path: Path) -> None:
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
     assert "global memory" in ctx
     assert "repo memory" in ctx
+
+
+# ---------------------------------------------------------------------------
+# 7. Per-session dedup: already-injected IDs are filtered out
+# ---------------------------------------------------------------------------
+
+def test_dedup_filters_already_injected_ids(tmp_path: Path) -> None:
+    import json, time
+
+    results = [
+        _make_result(0.9, "memory A", entry_id="id-1"),
+        _make_result(0.85, "memory B", entry_id="id-2"),
+        _make_result(0.80, "memory C", entry_id="id-3"),
+    ]
+    storage = _make_storage(labeled_count=12)
+    registry = _make_registry("global")
+
+    # Pre-populate the session file with id-1 already seen.
+    session_file = tmp_path / "session_injected.json"
+    session_file.write_text(json.dumps({"session_ts": time.time(), "ids": ["id-1"]}))
+
+    out = _run_main(tmp_path, _stdin_json(), global_results=results, storage=storage, registry=registry)
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "memory A" not in ctx
+    assert "memory B" in ctx
+
+
+# ---------------------------------------------------------------------------
+# 8. Budget cap stops injection after MAX_TOTAL_CHARS
+# ---------------------------------------------------------------------------
+
+def test_budget_cap_stops_after_max_total_chars(tmp_path: Path) -> None:
+    # Each entry text is 400 chars; MAX_CHARS_PER_HIT=300, MAX_TOTAL_CHARS=1500
+    # → entry_len per hit = 300; 5 entries = 1500 chars (exactly at limit), 6th would exceed
+    long_text = "x" * 400
+    results = [_make_result(0.9 - i * 0.01, long_text, entry_id=f"id-{i}") for i in range(7)]
+    storage = _make_storage(labeled_count=12)
+    registry = _make_registry("global")
+
+    out = _run_main(tmp_path, _stdin_json(), global_results=results, storage=storage, registry=registry)
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    # 5 entries fit exactly (5 × 300 = 1500), 6th and 7th are cut.
+    assert ctx.count("- [global") == 5
+
+
+# ---------------------------------------------------------------------------
+# 9. Expired session file is treated as a new session (dedup ignored)
+# ---------------------------------------------------------------------------
+
+def test_expired_session_file_is_ignored(tmp_path: Path) -> None:
+    import json, time
+
+    results = [
+        _make_result(0.9, "memory A", entry_id="id-1"),
+        _make_result(0.85, "memory B", entry_id="id-2"),
+    ]
+    storage = _make_storage(labeled_count=12)
+    registry = _make_registry("global")
+
+    # Write a session file that is 5 hours old (beyond SESSION_TTL_HOURS=4).
+    old_ts = time.time() - 5 * 3600
+    session_file = tmp_path / "session_injected.json"
+    session_file.write_text(json.dumps({"session_ts": old_ts, "ids": ["id-1", "id-2"]}))
+
+    out = _run_main(tmp_path, _stdin_json(), global_results=results, storage=storage, registry=registry)
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    # Both entries must appear because the old session file is expired.
+    assert "memory A" in ctx
+    assert "memory B" in ctx
+
+
+# ---------------------------------------------------------------------------
+# 10. Corrupt session file is ignored (does not crash the hook)
+# ---------------------------------------------------------------------------
+
+def test_corrupt_session_file_is_ignored(tmp_path: Path) -> None:
+    results = [_make_result(0.9, "memory A", entry_id="id-1")]
+    storage = _make_storage(labeled_count=12)
+    registry = _make_registry("global")
+
+    session_file = tmp_path / "session_injected.json"
+    session_file.write_text("{corrupt json{{")
+
+    out = _run_main(tmp_path, _stdin_json(), global_results=results, storage=storage, registry=registry)
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "memory A" in ctx

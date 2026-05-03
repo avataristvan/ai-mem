@@ -8,11 +8,15 @@ Agent-facing supplement to README.md. Contains dev commands, architecture naviga
 pip install -e .            # editable install (no ML, no BM25)
 pip install -e ".[hybrid]"  # with BM25 hybrid search
 pip install -e ".[ml]"      # with PyTorch re-ranker
+pip install -e ".[dream]"   # with Anthropic SDK for mem-dream
 python3 -m ai_mem.server    # run MCP server directly
 python3 install.py          # register with Claude Code / Gemini CLI / Cursor
 python3 -m ai_mem.hook      # run SessionStart hook manually
 python3 -m ai_mem.stop_hook # run Stop hook manually (from a git repo dir)
 python -m pytest tests/ -v  # run tests
+mem-dream --dry-run         # preview entries without API calls
+mem-dream --mode hier       # consolidate all collections (hier = default)
+mem-dream --mode team --collection repo.ExoDeck  # team exchange, one collection
 ```
 
 ## Architecture
@@ -28,6 +32,7 @@ Capability-centric DDD — three layers, no upward imports.
 - `TrainRankerUseCase` — buffer write, label assignment (7-day window), gradient step, NaN-loss guard, labeled-example eviction
 - `RankerRegistry` — lazy-loads and caches one ranker per scope key; implements `RankerProvider`; lives in application layer because it coordinates infrastructure artifacts
 - `CleanupMemoryUseCase` — returns `CleanupResult(collections: dict[str, CollectionCleanupStats])`
+- `ListEntriesUseCase` — returns all entries in a collection as `[{id, title}]`; title = first non-empty line, max 80 chars
 
 **Infrastructure** (`ai_mem/infrastructure/`)
 - `ChromaMemoryRepository` — timestamps as Unix float metadata: `created_at`, `expires_at`, `last_accessed_at`, `access_count`
@@ -55,3 +60,6 @@ Capability-centric DDD — three layers, no upward imports.
 - Section splitting in `repo_seeder.py` only includes H2 sections (`## `); the H1 intro block is intentionally excluded.
 - `BM25MemoryRepository` is transparent to the application layer — `QueryResult.score` holds the fused hybrid score, which becomes `RankingFeatures.cosine_similarity` in `BuildFeaturesUseCase`. The app layer never detects the wrapper.
 - Tests that call `upsert` directly must include non-empty metadata (ChromaDB rejects empty dicts). Use `AddMemoryUseCase` in tests to avoid this — it always injects timestamps.
+- `type` metadata field: `mem_add` accepts an optional `type` param (e.g. `"feedback"`, `"reference"`, `"project"`, `"user"`). `mem_query` accepts a matching `type` filter. ChromaDB `$and` is used when both `max_age_days` and `type_filter` are set.
+- `mem_list` with a `collection` param returns entry titles instead of collection counts; backed by `ListEntriesUseCase` and `get_all()`.
+- `BM25MemoryRepository.query()` forwards `type_filter` to the inner repo — filter is applied at the ChromaDB level before BM25 re-ranking.

@@ -7,6 +7,11 @@ from pathlib import Path
 DB_PATH = Path(os.environ.get("AI_MEM_PATH", Path.home() / ".local" / "share" / "ai-mem"))
 FOCUS_ID = "current_focus"
 _STATS_PATH = DB_PATH / "session_stats.json"
+_FOCUS_PREVIEW_CHARS = 150
+
+
+def _truncate(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[:limit].rstrip() + "…"
 
 
 def _focus_text(get_memory, collection: str) -> str | None:
@@ -72,9 +77,9 @@ def main():
 
         parts = []
         if repo_focus:
-            parts.append(f"[{ctx.scope_name} focus]\n{repo_focus}")
+            parts.append(f"[{ctx.scope_name} focus]\n{_truncate(repo_focus, _FOCUS_PREVIEW_CHARS)}")
         if global_focus:
-            parts.append(f"[global focus]\n{global_focus}")
+            parts.append(f"[global focus]\n{_truncate(global_focus, _FOCUS_PREVIEW_CHARS)}")
         if ctx.has_claude_md:
             parts.append(
                 f'Active collection: "{ctx.collection}". '

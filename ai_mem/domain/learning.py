@@ -24,6 +24,7 @@ class RankingFeatures:
     access_count: int
     has_ttl: bool
     expires_in_days: float          # only meaningful when has_ttl is True
+    session_hit: bool = False       # True when this entry was returned in a prior query this session
 
     @property
     def is_never_accessed(self) -> bool:
@@ -42,6 +43,7 @@ class RankingFeatures:
             math.log1p(max(0.0, self.age_days)),
             math.log1p(max(0.0, self.last_access_days)),
             math.log1p(max(0.0, float(self.access_count))),
+            1.0 if self.session_hit else 0.0,
         ]
 
 

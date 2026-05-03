@@ -31,16 +31,25 @@ class ChromaMemoryRepository:
         text: str,
         n_results: int,
         max_age_days: float | None,
+        type_filter: str | None = None,
     ) -> list[QueryResult]:
         col = self._col(collection)
         count = col.count()
         if count == 0:
             return []
 
-        where: dict | None = None
+        conditions: list[dict] = []
         if max_age_days is not None:
             cutoff = datetime.now(tz=timezone.utc).timestamp() - max_age_days * 86400
-            where = {"created_at": {"$gte": cutoff}}
+            conditions.append({"created_at": {"$gte": cutoff}})
+        if type_filter is not None:
+            conditions.append({"type": {"$eq": type_filter}})
+
+        where: dict | None = None
+        if len(conditions) == 1:
+            where = conditions[0]
+        elif len(conditions) > 1:
+            where = {"$and": conditions}
 
         kwargs: dict = {"query_texts": [text], "n_results": min(n_results, count)}
         if where:
@@ -126,6 +135,20 @@ class ChromaMemoryRepository:
             new_metas.append(m)
 
         col.update(ids=existing_ids, metadatas=new_metas)
+
+    def get_all(self, collection: str) -> list[MemoryEntry]:
+        try:
+            col = self._client.get_collection(collection)
+        except Exception:
+            return []
+        result = col.get()
+        ids = result.get("ids") or []
+        docs = result.get("documents") or []
+        metas = result.get("metadatas") or [{}] * len(ids)
+        return [
+            MemoryEntry(id=id_, text=doc, metadata=meta or {})
+            for id_, doc, meta in zip(ids, docs, metas)
+        ]
 
     def delete_stale(self, collection: str, stale_after_days: float) -> int:
         try:

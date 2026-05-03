@@ -81,6 +81,11 @@ def register_claude():
         "WHEN TO STORE: use mem_add after any decision, fix, or discovery worth remembering. "
         "Prefer short, precise entries. Use ttl_days for time-bounded items (tasks, reminders). "
         "Always update current_focus (id='current_focus') at the end of a working session."
+        "\n\n"
+        "MEMORY HYGIENE — use mem_dream when: the user asks to 'clean up', 'consolidate', or 'review' memories; "
+        "you notice contradictions or stale entries while querying; or the collection has grown large (>30 entries). "
+        "mem_dream returns a structured diff proposal — it does NOT apply changes. "
+        "After reviewing the proposal, apply changes manually with mem_add / mem_delete."
     )
 
     def update_mcp(data: dict) -> dict:

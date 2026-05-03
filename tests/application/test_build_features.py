@@ -54,7 +54,23 @@ def test_as_vector_length():
     now = time.time()
     uc = BuildFeaturesUseCase()
     feats = uc.execute([_result()], now)
-    assert len(feats[0].as_vector()) == 10
+    assert len(feats[0].as_vector()) == 11
+
+
+def test_session_hit_false_by_default():
+    now = time.time()
+    uc = BuildFeaturesUseCase()
+    feats = uc.execute([_result(id_="x")], now)
+    assert feats[0].session_hit is False
+    assert feats[0].as_vector()[10] == 0.0
+
+
+def test_session_hit_true_when_id_in_hits():
+    now = time.time()
+    uc = BuildFeaturesUseCase()
+    feats = uc.execute([_result(id_="x"), _result(id_="y")], now, session_hits={"x"})
+    assert feats[0].session_hit is True
+    assert feats[1].session_hit is False
 
 
 def test_access_count_populated():

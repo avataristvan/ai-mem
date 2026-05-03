@@ -29,6 +29,9 @@ hybrid = [
   "rank_bm25>=0.7",
 ]
 
+[project.scripts]
+mem-dream = "ai_mem.dream_cli:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ai_mem*"]

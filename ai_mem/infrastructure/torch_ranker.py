@@ -20,7 +20,7 @@ except ImportError:
 
 
 class TorchMicroRanker:
-    """[10 -> 32 -> 16 -> 1] MLP with sigmoid output. AdamW lr=1e-3."""
+    """[11 -> 32 -> 16 -> 1] MLP with sigmoid output. AdamW lr=1e-3."""
 
     def __init__(self, seed: int | None = None) -> None:
         if not _TORCH_AVAILABLE:
@@ -31,7 +31,7 @@ class TorchMicroRanker:
         if seed is not None:
             _torch.manual_seed(seed)
         self._model = _nn.Sequential(
-            _nn.Linear(10, 32),
+            _nn.Linear(11, 32),
             _nn.ReLU(),
             _nn.Linear(32, 16),
             _nn.ReLU(),

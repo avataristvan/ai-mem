@@ -1,6 +1,8 @@
 """Tests for MEMORY.md auto-demotion logic."""
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -207,3 +209,41 @@ def test_auto_demote_includes_entry_id_as_stem(tmp_path: Path) -> None:
     auto_demote(tmp_path, add_uc, **_TEST_OPTS)
     _, kwargs = add_uc.execute.call_args
     assert kwargs["ids"] == ["feedback_rules"]
+
+
+def test_auto_demote_stale_entries_below_threshold(tmp_path: Path) -> None:
+    """Entries older than stale_days are demoted even when MEMORY.md is below threshold."""
+    fb_path = _write_mem_file(tmp_path, "old_fb.md", "feedback")
+    old_time = time.time() - 35 * 86400
+    os.utime(fb_path, (old_time, old_time))
+    # Only 4 lines — well below any threshold
+    _write_memory_md(tmp_path, [("Old feedback", "old_fb.md")])
+    add_uc = _mock_add_uc()
+
+    result = auto_demote(tmp_path, add_uc, stale_days=30)
+    assert result == ["Old feedback"]
+    add_uc.execute.assert_called_once()
+
+
+def test_auto_demote_fresh_entries_not_stale(tmp_path: Path) -> None:
+    """Freshly written entries are never treated as stale."""
+    _write_mem_file(tmp_path, "fresh.md", "feedback")
+    _write_memory_md(tmp_path, [("Fresh entry", "fresh.md")])
+    add_uc = _mock_add_uc()
+
+    result = auto_demote(tmp_path, add_uc, stale_days=30)
+    assert result == []
+    add_uc.execute.assert_not_called()
+
+
+def test_auto_demote_stale_disabled_when_stale_days_none(tmp_path: Path) -> None:
+    """Stale check is skipped when stale_days=None."""
+    fb_path = _write_mem_file(tmp_path, "old_fb.md", "feedback")
+    old_time = time.time() - 35 * 86400
+    os.utime(fb_path, (old_time, old_time))
+    _write_memory_md(tmp_path, [("Old feedback", "old_fb.md")])
+    add_uc = _mock_add_uc()
+
+    result = auto_demote(tmp_path, add_uc, stale_days=None)
+    assert result == []
+    add_uc.execute.assert_not_called()

@@ -54,6 +54,20 @@ def test_query_returns_results_after_add(tmp_repo, track_access, tmp_path):
     assert results[0].id == "a"
 
 
+def test_query_type_filter_restricts_results(tmp_repo, track_access, tmp_path):
+    AddMemoryUseCase(tmp_repo).execute(
+        collection="typed_col",
+        documents=["feedback entry", "reference entry"],
+        ids=["f1", "r1"],
+        metadatas=[{"type": "feedback"}, {"type": "reference"}],
+    )
+    results = _make_query_uc(tmp_repo, track_access, tmp_path).execute(
+        collection="typed_col", query="entry", n_results=5, type_filter="feedback"
+    )
+    assert len(results) == 1
+    assert results[0].id == "f1"
+
+
 def test_query_increments_access_count(tmp_repo, track_access, tmp_path):
     AddMemoryUseCase(tmp_repo).execute(
         collection="test_col",

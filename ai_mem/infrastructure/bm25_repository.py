@@ -34,8 +34,9 @@ class BM25MemoryRepository:
         text: str,
         n_results: int,
         max_age_days: float | None,
+        type_filter: str | None = None,
     ) -> list[QueryResult]:
-        candidates = self._inner.query(collection, text, _BM25_FETCH, max_age_days)
+        candidates = self._inner.query(collection, text, _BM25_FETCH, max_age_days, type_filter)
         if not candidates:
             return []
 
@@ -94,6 +95,9 @@ class BM25MemoryRepository:
 
     def record_access(self, collection: str, ids: list[str]) -> None:
         self._inner.record_access(collection, ids)
+
+    def get_all(self, collection: str) -> list[MemoryEntry]:
+        return self._inner.get_all(collection)
 
     def delete_stale(self, collection: str, stale_after_days: float) -> int:
         return self._inner.delete_stale(collection, stale_after_days)

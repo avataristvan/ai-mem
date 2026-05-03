@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SessionStop hook — reminds Claude to update current_focus after file changes."""
+"""SessionStop hook — reminds Claude to update current_focus and surface split hints."""
 import os
 import subprocess
 import sys
@@ -32,32 +32,63 @@ def _try_demote() -> None:
         pass
 
 
+def _split_hint_ids(collection: str) -> list[str]:
+    """Return IDs of entries that qualify for splitting (high access + long text)."""
+    try:
+        from ai_mem.application.detect_split_hints import SPLIT_MIN_TEXT_CHARS, SPLIT_THRESHOLD_ACCESSES
+        from ai_mem.infrastructure.chroma_repository import ChromaMemoryRepository
+
+        if not DB_PATH.exists():
+            return []
+        repo = ChromaMemoryRepository(DB_PATH)
+        return [
+            e.id
+            for e in repo.get_all(collection)
+            if int(e.metadata.get("access_count", 0)) >= SPLIT_THRESHOLD_ACCESSES
+            and len(e.text) >= SPLIT_MIN_TEXT_CHARS
+        ]
+    except Exception:
+        return []
+
+
 def main():
     _try_demote()
+
+    messages: list[str] = []
+
     try:
+        from ai_mem.repo_context import WORKSPACE_COLLECTION, detect_repo_context
+
+        ctx = detect_repo_context()
+
         r = subprocess.run(
             ["git", "diff", "--name-only", "HEAD"],
             capture_output=True, text=True,
         )
         changed = len([l for l in r.stdout.splitlines() if l.strip()])
-        if changed == 0:
-            return
+        if changed > 0:
+            if ctx.collection != WORKSPACE_COLLECTION:
+                focus_hint = f'mem_add id=current_focus collection="{ctx.collection}"'
+            else:
+                focus_hint = "mem_add id=current_focus"
+            messages.append(
+                f"Files changed this session ({changed} file(s)) — "
+                f"update current_focus in ai-mem ({focus_hint})."
+            )
 
-        from ai_mem.repo_context import detect_repo_context, WORKSPACE_COLLECTION
-
-        ctx = detect_repo_context()
-        if ctx.collection != WORKSPACE_COLLECTION:
-            hint = f'mem_add id=current_focus collection="{ctx.collection}"'
-        else:
-            hint = "mem_add id=current_focus"
-
-        print(
-            f"Files changed this session ({changed} file(s)) — "
-            f"update current_focus in ai-mem ({hint})."
-        )
-        sys.exit(2)
+        split_ids = _split_hint_ids(ctx.collection)
+        if split_ids:
+            col_hint = f' collection="{ctx.collection}"' if ctx.collection != WORKSPACE_COLLECTION else ""
+            messages.append(
+                f"Split hints in '{ctx.collection}': {', '.join(split_ids)} — "
+                f"call mem_split{col_hint}."
+            )
     except Exception:
         pass
+
+    if messages:
+        print("\n".join(messages))
+        sys.exit(2)
 
 
 if __name__ == "__main__":

@@ -10,9 +10,51 @@ from ai_mem.repo_context import GLOBAL_COLLECTION, WORKSPACE_COLLECTION, detect_
 DB_PATH = Path(os.environ.get("AI_MEM_PATH", Path.home() / ".local" / "share" / "ai-mem"))
 _STATS_PATH = DB_PATH / "session_stats.json"
 TOP_K = 3
-MAX_CHARS_PER_HIT = 600
+MAX_CHARS_PER_HIT = 300
+MAX_TOTAL_CHARS = 1500
 MIN_LABELED_EXAMPLES = 10
 MIN_AVG_SCORE = 0.55
+SESSION_TTL_HOURS = 4
+
+
+def _load_session_injected(db_path: Path) -> set[str]:
+    """Return the set of entry IDs already injected this session.
+
+    Returns an empty set if the file is absent, unreadable, or older than SESSION_TTL_HOURS.
+    """
+    import time
+
+    path = db_path / "session_injected.json"
+    try:
+        data = json.loads(path.read_text())
+        age_hours = (time.time() - data["session_ts"]) / 3600
+        if age_hours > SESSION_TTL_HOURS:
+            return set()
+        return set(data.get("ids", []))
+    except Exception:
+        return set()
+
+
+def _save_session_injected(db_path: Path, ids: set[str]) -> None:
+    """Persist the current session's injected IDs; silently ignores I/O errors."""
+    import time
+
+    path = db_path / "session_injected.json"
+    try:
+        existing = _load_session_injected(db_path)
+        merged = existing | ids
+        ts = time.time()
+        # Preserve the original session_ts if the file is still valid.
+        try:
+            data = json.loads(path.read_text())
+            age_hours = (time.time() - data["session_ts"]) / 3600
+            if age_hours <= SESSION_TTL_HOURS:
+                ts = data["session_ts"]
+        except Exception:
+            pass
+        path.write_text(json.dumps({"session_ts": ts, "ids": list(merged)}))
+    except Exception:
+        pass
 
 
 def _build_deps():
@@ -129,13 +171,37 @@ def main():
     if not collected:
         return
 
+    # Per-session dedup: skip entries already injected in this session.
+    already_injected = _load_session_injected(DB_PATH)
+    collected = [(coll, r) for coll, r in collected if getattr(r, "id", None) not in already_injected or getattr(r, "id", None) is None]
+
+    # Combined budget cap: include entries until MAX_TOTAL_CHARS is reached.
+    budget_collected: list[tuple[str, object]] = []
+    chars_used = 0
+    for coll, r in collected:
+        entry_len = min(len(r.text), MAX_CHARS_PER_HIT)
+        if chars_used + entry_len > MAX_TOTAL_CHARS:
+            break
+        budget_collected.append((coll, r))
+        chars_used += entry_len
+    collected = budget_collected
+
+    if not collected:
+        return
+
     lines = ["[ai-mem] Relevant context for your prompt:"]
+    injected_ids: set[str] = set()
     for coll, r in collected:
         text = r.text[:MAX_CHARS_PER_HIT]
         if len(r.text) > MAX_CHARS_PER_HIT:
             text += "..."
         score = f"{r.score:.2f}" if r.score is not None else "n/a"
         lines.append(f"- [{coll} score={score}] {text}")
+        entry_id = getattr(r, "id", None)
+        if entry_id is not None:
+            injected_ids.add(entry_id)
+
+    _save_session_injected(DB_PATH, injected_ids)
 
     print(
         json.dumps(

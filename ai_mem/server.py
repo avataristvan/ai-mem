@@ -10,15 +10,18 @@ import mcp.types as types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
+from ai_mem.application.dream_memory import DreamMemoryUseCase, MODES
 from ai_mem.application.add_memory import AddMemoryUseCase
 from ai_mem.application.detect_split_hints import DetectSplitHintsUseCase
 from ai_mem.application.build_features import BuildFeaturesUseCase
 from ai_mem.application.cleanup_memory import CleanupMemoryUseCase
 from ai_mem.application.delete_memory import DeleteMemoryUseCase
 from ai_mem.application.list_collections import ListCollectionsUseCase
+from ai_mem.application.list_entries import ListEntriesUseCase
 from ai_mem.application.load_ranker_config import LoadRankerConfigUseCase
 from ai_mem.application.query_memory import QueryMemoryUseCase
 from ai_mem.application.ranker_registry import RankerRegistry
+from ai_mem.application.split_memory import SplitMemoryUseCase
 from ai_mem.application.track_access import TrackAccessUseCase
 from ai_mem.application.train_ranker import TrainRankerUseCase
 from ai_mem.domain.learning import RankerScope
@@ -62,7 +65,10 @@ _query = QueryMemoryUseCase(_repo, _track_access, _build_features, _train_ranker
 _list = ListCollectionsUseCase(_repo)
 _delete = DeleteMemoryUseCase(_repo)
 _cleanup = CleanupMemoryUseCase(_repo)
+_list_entries = ListEntriesUseCase(_repo)
 _detect_split_hints = DetectSplitHintsUseCase()
+_dream = DreamMemoryUseCase(_repo)
+_split = SplitMemoryUseCase(_repo, _add)
 
 server = Server("ai-mem")
 
@@ -87,6 +93,7 @@ async def list_tools() -> list[types.Tool]:
                     "collection": {"type": "string", "description": f"Collection name (default: '{DEFAULT_COLLECTION}')"},
                     "metadatas": {"type": "array", "items": {"type": "object"}, "description": "Optional metadata per entry"},
                     "ttl_days": {"type": "number", "description": "Optional TTL in days — entry is deleted by mem_cleanup after expiry"},
+                    "type": {"type": "string", "description": "Optional entry type tag (e.g. 'feedback', 'reference', 'project', 'user') for later filtering"},
                 },
                 "required": ["documents", "ids"],
             },
@@ -109,14 +116,24 @@ async def list_tools() -> list[types.Tool]:
                     "collection": {"type": "string", "description": f"Collection to search (default: '{DEFAULT_COLLECTION}')"},
                     "n_results": {"type": "integer", "default": 5, "description": "Number of results to return"},
                     "max_age_days": {"type": "number", "description": "Only return entries created within this many days"},
+                    "type": {"type": "string", "description": "Only return entries with this type tag (e.g. 'feedback', 'reference')"},
                 },
                 "required": ["query"],
             },
         ),
         types.Tool(
             name="mem_list",
-            description="List all memory collections with their entry counts.",
-            inputSchema={"type": "object", "properties": {}},
+            description=(
+                "List memory collections with their entry counts. "
+                "If 'collection' is provided, returns all entries in that collection as a list of {id, title} pairs "
+                "(title = first non-empty line of the entry text, max 80 characters)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "collection": {"type": "string", "description": "Collection to list entries for (omit to list all collections)"},
+                },
+            },
         ),
         types.Tool(
             name="mem_delete",
@@ -150,6 +167,36 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
         types.Tool(
+            name="mem_dream",
+            description=(
+                "Consolidate memories using Claude models — identifies contradictions, redundancies, "
+                "stale entries, and undocumented emergent principles. "
+                "Modes: 'single-haiku', 'single-sonnet', 'hier' (Haiku fast pass → Sonnet synthesis, default), "
+                "'team' (4-turn Haiku↔Sonnet exchange). "
+                "Invoked via the claude CLI — no API key required. "
+                "Returns a structured diff proposal. Set 'auto_apply' to true to automatically "
+                "execute DELETE actions identified by the synthesis."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "collection": {"type": "string", "description": "Collection to consolidate (omit for all)"},
+                    "mode": {
+                        "type": "string",
+                        "enum": list(MODES),
+                        "default": "hier",
+                        "description": "Consolidation mode (default: hier)",
+                    },
+                    "auto_apply": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Automatically delete entries identified as safe to remove",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        types.Tool(
             name="mem_train",
             description=(
                 "Run a training step for the learned re-ranker. "
@@ -164,6 +211,24 @@ async def list_tools() -> list[types.Tool]:
                 "required": [],
             },
         ),
+        types.Tool(
+            name="mem_split",
+            description=(
+                "Split a coarse memory entry into 2-3 focused sub-entries using Claude. "
+                "If 'entry_id' is omitted, auto-splits all hinted entries in the collection "
+                f"(access_count ≥ {5} and text ≥ {150} chars). "
+                "The original entry is deleted and replaced by the sub-entries. "
+                f"Leave 'collection' empty to use the default ('{DEFAULT_COLLECTION}')."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "collection": {"type": "string", "description": f"Collection to split in (default: '{DEFAULT_COLLECTION}')"},
+                    "entry_id": {"type": "string", "description": "ID of a specific entry to split (omit to auto-split all hinted entries)"},
+                },
+                "required": [],
+            },
+        ),
     ]
 
 
@@ -172,11 +237,19 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     collection = arguments.get("collection") or DEFAULT_COLLECTION
 
     if name == "mem_add":
+        metadatas = arguments.get("metadatas")
+        type_tag = arguments.get("type")
+        if type_tag is not None:
+            n = len(arguments["documents"])
+            if metadatas is None:
+                metadatas = [{} for _ in range(n)]
+            for m in metadatas:
+                m.setdefault("type", type_tag)
         count = _add.execute(
             collection=collection,
             documents=arguments["documents"],
             ids=arguments["ids"],
-            metadatas=arguments.get("metadatas"),
+            metadatas=metadatas,
             ttl_days=arguments.get("ttl_days"),
         )
         return [types.TextContent(type="text", text=f"Stored {count} entry/entries in '{collection}'.")]
@@ -187,6 +260,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             query=arguments["query"],
             n_results=arguments.get("n_results", 5),
             max_age_days=arguments.get("max_age_days"),
+            type_filter=arguments.get("type"),
         )
         split_hints = _detect_split_hints.execute(results)
         out = {
@@ -209,6 +283,10 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return [types.TextContent(type="text", text=json.dumps(out, indent=2, ensure_ascii=False))]
 
     if name == "mem_list":
+        col_arg = arguments.get("collection")
+        if col_arg:
+            entries = _list_entries.execute(col_arg)
+            return [types.TextContent(type="text", text=json.dumps(entries, indent=2, ensure_ascii=False))]
         cols = _list.execute()
         return [types.TextContent(type="text", text=json.dumps([{"name": c.name, "count": c.count} for c in cols], indent=2))]
 
@@ -226,6 +304,13 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             indent=2,
         )
         return [types.TextContent(type="text", text=f"Cleaned up {result.total} entry/entries.\n{detail}")]
+
+    if name == "mem_dream":
+        mode = arguments.get("mode") or "hier"
+        col_arg = arguments.get("collection") or None
+        auto_apply = bool(arguments.get("auto_apply", False))
+        result = await asyncio.to_thread(_dream.execute, col_arg, mode, auto_apply)
+        return [types.TextContent(type="text", text=result)]
 
     if name == "mem_train":
         now = time.time()
@@ -249,6 +334,23 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 results_list.append({"collection": col, "scope": key, "n": m.n, "loss": m.loss, "skipped": m.skipped})
             out = results_list  # type: ignore[assignment]
         return [types.TextContent(type="text", text=json.dumps(out, indent=2))]
+
+    if name == "mem_split":
+        entry_id = arguments.get("entry_id") or None
+        results = await asyncio.to_thread(_split.execute, collection, entry_id)
+        out = [
+            {
+                "original_id": r.original_id,
+                "new_ids": r.new_ids,
+                "skipped": r.skipped,
+                **({"skip_reason": r.skip_reason} if r.skipped else {}),
+            }
+            for r in results
+        ]
+        total = len(results)
+        succeeded = sum(1 for r in results if not r.skipped)
+        summary = f"Split {succeeded}/{total} entries."
+        return [types.TextContent(type="text", text=f"{summary}\n{json.dumps(out, indent=2)}")]
 
     raise ValueError(f"Unknown tool: {name}")
 

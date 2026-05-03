@@ -52,12 +52,28 @@ class RankerStorage:
         path = self.buffer_path(scope)
         if not path.exists():
             return
-        with path.open("r", encoding="utf-8") as f:
-            lines = f.readlines()
-        if len(lines) <= keep_last:
+        examples = self.load_buffer(scope)
+        if len(examples) <= keep_last:
             return
+        # Keep labeled examples first (they carry training signal not yet used),
+        # then unlabeled by recency. This prevents evicting fresh labeled examples
+        # in favour of old uncertain ones (the old FIFO strategy's failure mode).
+        labeled = sorted(
+            [e for e in examples if e.target_future_access is not None],
+            key=lambda e: e.retrieved_at,
+            reverse=True,
+        )
+        unlabeled = sorted(
+            [e for e in examples if e.target_future_access is None],
+            key=lambda e: e.retrieved_at,
+            reverse=True,
+        )
+        kept = (labeled + unlabeled)[:keep_last]
+        kept.sort(key=lambda e: e.retrieved_at)
+        path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as f:
-            f.writelines(lines[-keep_last:])
+            for ex in kept:
+                f.write(json.dumps(_serialize(ex)) + "\n")
 
     def clear_buffer(self, scope: str) -> None:
         path = self.buffer_path(scope)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+from collections import defaultdict
 
 from ai_mem.application.build_features import BuildFeaturesUseCase
 from ai_mem.application.track_access import TrackAccessUseCase
@@ -9,7 +10,7 @@ from ai_mem.application.train_ranker import TrainRankerUseCase
 from ai_mem.domain.learning import RankerProvider
 from ai_mem.domain.memory import MemoryRepository, QueryResult
 
-_FETCH_K = 20  # over-fetch for re-ranking
+_FETCH_K = 50  # over-fetch for re-ranking
 
 
 class QueryMemoryUseCase:
@@ -26,6 +27,7 @@ class QueryMemoryUseCase:
         self._build_features = build_features
         self._train_ranker = train_ranker
         self._ranker_provider = ranker_provider
+        self._session_hits: dict[str, set[str]] = defaultdict(set)
 
     def execute(
         self,
@@ -33,13 +35,14 @@ class QueryMemoryUseCase:
         query: str,
         n_results: int = 5,
         max_age_days: float | None = None,
+        type_filter: str | None = None,
     ) -> list[QueryResult]:
         now = time.time()
-        candidates = self._repo.query(collection, query, _FETCH_K, max_age_days)
+        candidates = self._repo.query(collection, query, _FETCH_K, max_age_days, type_filter)
         if not candidates:
             return []
 
-        features = self._build_features.execute(candidates, now)
+        features = self._build_features.execute(candidates, now, self._session_hits.get(collection))
         ranker = self._ranker_provider.get(collection)
         scores = ranker.rank(features)
         if len(scores) != len(candidates):
@@ -56,7 +59,9 @@ class QueryMemoryUseCase:
         for i, r in enumerate(results):
             r.rank = i + 1
 
-        self._track_access.execute(collection, [r.id for r in results])
-        self._train_ranker.record_query(collection, candidates, features, now)
+        returned_ids = {r.id for r in results}
+        self._session_hits[collection].update(returned_ids)
+        self._track_access.execute(collection, list(returned_ids))
+        self._train_ranker.record_query(collection, candidates, features, now, returned_ids=returned_ids)
 
         return results

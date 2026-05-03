@@ -58,6 +58,19 @@ def test_record_query_writes_buffer(train_uc, storage):
     assert buf[0].target_future_access is None
 
 
+def test_record_query_immediately_labels_returned_ids(train_uc, storage):
+    """Entries in returned_ids get target=1.0; others remain unlabeled."""
+    now = time.time()
+    results = [_qresult("a"), _qresult("b"), _qresult("c")]
+    features = [_features()] * 3
+    train_uc.record_query("col", results, features, now, returned_ids={"a", "c"})
+
+    buf = {e.memory_id: e for e in storage.load_buffer("col")}
+    assert buf["a"].target_future_access == 1.0
+    assert buf["b"].target_future_access is None
+    assert buf["c"].target_future_access == 1.0
+
+
 def test_record_query_sets_co_activated_ids(train_uc, storage):
     now = time.time()
     results = [_qresult("a"), _qresult("b"), _qresult("c")]

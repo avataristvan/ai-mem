@@ -66,33 +66,61 @@ def auto_demote(
     project_collection: str | None = None,
     _threshold: int | None = None,
     _target_lines: int | None = None,
+    stale_days: int | None = 30,
 ) -> list[str]:
     """
-    If MEMORY.md >= threshold lines, migrate the oldest/lowest-priority entries to
-    ai-mem and remove them from the index.  Returns the titles of demoted entries.
+    Migrate entries to ai-mem when either:
+    - MEMORY.md >= threshold lines (priority-ordered demotion down to target), or
+    - An entry's backing file is older than stale_days (proactive, regardless of threshold).
+
+    Returns the titles of demoted entries.
     """
     threshold = _threshold if _threshold is not None else DEMOTION_THRESHOLD
     target = _target_lines if _target_lines is not None else _TARGET_LINES
     entries, line_count = read_index(memory_dir)
-    if line_count < threshold or not entries:
+    if not entries:
         return []
 
-    to_free = max(line_count - target, 1)  # demote at least 1 entry when above threshold
+    stale_cutoff = time.time() - stale_days * 86400 if stale_days is not None else None
+    is_over_threshold = line_count >= threshold
+    has_stale = stale_cutoff is not None and any(
+        e.mtime > 0 and e.mtime < stale_cutoff for e in entries
+    )
+    if not is_over_threshold and not has_stale:
+        return []
 
-    candidates = sorted(entries, key=_sort_key)
+    to_demote: list[IndexEntry] = []
+    scheduled: set[str] = set()  # line strings already queued
+
+    # Phase 1: threshold-based demotion (priority order)
+    if is_over_threshold:
+        to_free = max(line_count - target, 1)
+        freed = 0
+        for entry in sorted(entries, key=_sort_key):
+            if freed >= to_free:
+                break
+            to_demote.append(entry)
+            scheduled.add(entry.line)
+            freed += 1
+
+    # Phase 2: stale demotion (entries not touched in stale_days, skipping already queued)
+    if stale_cutoff is not None:
+        for entry in entries:
+            if entry.line not in scheduled and entry.mtime > 0 and entry.mtime < stale_cutoff:
+                to_demote.append(entry)
+                scheduled.add(entry.line)
+
+    if not to_demote:
+        return []
+
     memory_md = memory_dir / "MEMORY.md"
     lines_to_remove: set[str] = set()
     demoted_titles: list[str] = []
 
-    freed = 0
-    for entry in candidates:
-        if freed >= to_free:
-            break
-
+    for entry in to_demote:
         fpath = memory_dir / entry.filename
         if not fpath.exists():
             lines_to_remove.add(entry.line)
-            freed += 1
             continue
 
         collection = (
@@ -117,7 +145,6 @@ def auto_demote(
 
         lines_to_remove.add(entry.line)
         demoted_titles.append(entry.title)
-        freed += 1
 
     if lines_to_remove:
         original = memory_md.read_text(encoding="utf-8")

@@ -49,6 +49,7 @@ class MemoryRepository(Protocol):
         text: str,
         n_results: int,
         max_age_days: float | None,
+        type_filter: str | None = None,
     ) -> list[QueryResult]: ...
 
     def get_by_ids(self, collection: str, ids: list[str]) -> list[MemoryEntry]:
@@ -71,4 +72,8 @@ class MemoryRepository(Protocol):
 
     def delete_stale(self, collection: str, stale_after_days: float) -> int:
         """Remove entries whose last_accessed_at is older than the cutoff. Returns count."""
+        ...
+
+    def get_all(self, collection: str) -> list[MemoryEntry]:
+        """Return every entry in a collection (no filtering, no ranking)."""
         ...

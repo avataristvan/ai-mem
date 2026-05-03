@@ -6,10 +6,16 @@ from ai_mem.domain.memory import QueryResult
 
 
 class BuildFeaturesUseCase:
-    def execute(self, results: list[QueryResult], now: float) -> list[RankingFeatures]:
-        return [self._from_result(r, now) for r in results]
+    def execute(
+        self,
+        results: list[QueryResult],
+        now: float,
+        session_hits: set[str] | None = None,
+    ) -> list[RankingFeatures]:
+        hits = session_hits or set()
+        return [self._from_result(r, now, r.id in hits) for r in results]
 
-    def _from_result(self, result: QueryResult, now: float) -> RankingFeatures:
+    def _from_result(self, result: QueryResult, now: float, session_hit: bool = False) -> RankingFeatures:
         meta = result.metadata
         created_at: float = meta.get("created_at", now)
         access_count: int = int(meta.get("access_count", 0))
@@ -28,4 +34,5 @@ class BuildFeaturesUseCase:
             access_count=access_count,
             has_ttl=has_ttl,
             expires_in_days=expires_in_days,
+            session_hit=session_hit,
         )
