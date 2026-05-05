@@ -4,6 +4,33 @@ Persistent semantic memory for AI agents. Stores, searches, and retrieves inform
 
 Works with **Claude Code**, **Gemini CLI**, and **Cursor**.
 
+## Workflow
+
+ai-mem is designed around a three-phase task loop:
+
+```
+/plan  →  [coding]  →  /reflect
+  ↑                        |
+  └──── memories updated ←─┘
+```
+
+| Phase | What happens | ai-mem role |
+|-------|-------------|-------------|
+| **Plan** | Review goals, prior decisions, current focus | `mem_query` surfaces relevant context |
+| **Code** | Implement the task | — |
+| **Reflect** | Capture what was learned, good and bad | `mem_add` stores learnings for the next session |
+
+Run `/reflect` to enter the Reflect phase. It walks through a lightweight standup: agent observations first, then two questions, then next-todo aggregation.
+
+Run `/reflect` after completing a task or todo. It walks through four questions:
+
+1. What went well? → stored as `type=feedback` (reusable rule)
+2. What was painful or surprising? → stored as `type=feedback` (anti-pattern: "avoid X because Y")
+3. What changed in the project? → stored as `type=project`
+4. What's next? → updates `current_focus`
+
+The next session starts where this one left off.
+
 ## Install
 
 ```bash

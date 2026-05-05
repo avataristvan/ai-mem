@@ -53,6 +53,13 @@ def main():
     except Exception:
         return
 
+    try:
+        from ai_mem.agent_context import detect_for_hook
+        if not detect_for_hook(payload).should_inject:
+            return
+    except Exception:
+        pass
+
     if payload.get("tool_name") not in ("Write", "Edit"):
         return
 

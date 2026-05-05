@@ -2,11 +2,15 @@
 """SessionStart hook — injects repo/global current_focus and collection routing into Claude's context."""
 import json
 import os
+import sys
 from pathlib import Path
+
+import time
 
 DB_PATH = Path(os.environ.get("AI_MEM_PATH", Path.home() / ".local" / "share" / "ai-mem"))
 FOCUS_ID = "current_focus"
 _STATS_PATH = DB_PATH / "session_stats.json"
+_SESSION_START_FILE = DB_PATH / "session_start.txt"
 _FOCUS_PREVIEW_CHARS = 150
 
 
@@ -50,6 +54,20 @@ def _try_seed(ctx, repo, stats_path: Path) -> None:
 
 def main():
     try:
+        stdin_json: dict = json.load(sys.stdin)
+    except Exception:
+        stdin_json = {}
+
+    try:
+        from ai_mem.agent_context import detect_for_session_start, write_to_env_file
+        agent_ctx = detect_for_session_start(stdin_json)
+        write_to_env_file(agent_ctx)
+        if not agent_ctx.should_inject:
+            return
+    except Exception:
+        pass
+
+    try:
         from ai_mem.application.get_memory import GetMemoryUseCase
         from ai_mem.infrastructure.chroma_repository import ChromaMemoryRepository
         from ai_mem.repo_context import GLOBAL_COLLECTION, WORKSPACE_COLLECTION, detect_repo_context
@@ -59,6 +77,11 @@ def main():
 
     if not DB_PATH.exists():
         return
+
+    try:
+        _SESSION_START_FILE.write_text(str(time.time()))
+    except Exception:
+        pass
 
     try:
         ctx = detect_repo_context()

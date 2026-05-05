@@ -129,6 +129,13 @@ def main():
     except Exception:
         return
 
+    try:
+        from ai_mem.agent_context import detect_for_hook
+        if not detect_for_hook(payload).should_inject:
+            return
+    except Exception:
+        pass
+
     query = payload.get("prompt", "").strip()
     if not query or not DB_PATH.exists():
         return

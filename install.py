@@ -133,43 +133,9 @@ def register_claude():
 
     patch_json(settings_path, update_userprompt_hook)
 
-    # Stop hook → reminds Claude to update current_focus
-    OLD_STOP_CMD = (
-        "changed=$(git diff --name-only HEAD 2>/dev/null | wc -l); "
-        "if [ \"${changed:-0}\" -gt 0 ]; then "
-        "echo \"Files changed this session - update current_focus in ai-mem (mem_add id=current_focus).\"; "
-        "exit 2; fi"
-    )
-    stop_cmd = f"{python_exe()} -m ai_mem.stop_hook 2>/dev/null || true"
-
-    def update_stop_hook(data: dict) -> dict:
-        hooks = data.setdefault("hooks", {})
-        stop_hooks = hooks.setdefault("Stop", [])
-        # Remove the old bash one-liner if present
-        hooks["Stop"] = [
-            entry for entry in stop_hooks
-            if not any(h.get("command") == OLD_STOP_CMD for h in entry.get("hooks", []))
-        ]
-        stop_hooks = hooks["Stop"]
-        already = any(
-            h.get("command") == stop_cmd
-            for entry in stop_hooks
-            for h in entry.get("hooks", [])
-        )
-        if not already:
-            stop_hooks.append({
-                "hooks": [{
-                    "type": "command",
-                    "command": stop_cmd,
-                    "asyncRewake": True,
-                    "rewakeSummary": "ai-mem focus update reminder"
-                }]
-            })
-        return data
-
-    patch_json(settings_path, update_stop_hook)
     install_mem_init_command()
-    print("   ✓ MCP server + SessionStart + UserPromptSubmit + Stop hooks registered. Restart Claude Code to activate.")
+    install_reflect_command()
+    print("   ✓ MCP server + SessionStart + UserPromptSubmit hooks registered. Restart Claude Code to activate.")
 
 
 _MEM_INIT_CONTENT = """\
@@ -206,6 +172,18 @@ def install_mem_init_command():
     target = commands_dir / "mem-init.md"
     target.write_text(_MEM_INIT_CONTENT)
     print(f"   ✓ /mem-init command installed at {target}")
+
+
+def install_reflect_command():
+    source = REPO_ROOT / "skills" / "reflect.md"
+    if not source.exists():
+        print("   ⚠ skills/reflect.md not found, skipping /reflect install.")
+        return
+    commands_dir = HOME / ".claude" / "commands"
+    commands_dir.mkdir(parents=True, exist_ok=True)
+    target = commands_dir / "reflect.md"
+    target.write_text(source.read_text())
+    print(f"   ✓ /reflect command installed at {target}")
 
 
 def register_gemini():
