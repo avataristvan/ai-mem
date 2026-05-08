@@ -45,14 +45,21 @@ def register_claude():
     print(f"\n🤖 Registering with Claude Code ({mcp_path})...")
 
     INSTRUCTIONS = (
-        "ai-mem is a persistent semantic memory store for engineers. "
+        "ai-mem is a persistent semantic memory store for AI agents. "
         "When these tools are available, ai-mem is installed and active. "
+        "\n\n"
+        "THE LEARNING LOOP — ai-mem is not just storage. It is the persistence layer of an epistemology framework: "
+        "a system for how an agent accumulates structured experience and becomes more effective over time. "
+        "The loop is: Plan (query relevant context) → work → Reflect (store learnings, blockers, todos). "
+        "Run /reflect after every task to close the loop. "
+        "Run /mem-init to initialize memory for a new project scope. "
+        "Over time, the adaptive re-ranker learns which entries matter for which queries — "
+        "the agent becomes more competent not by using a larger model, but through better-organized knowledge. "
         "\n\n"
         "MEMORY SCOPING: Memory is scoped to the nearest CLAUDE.md. "
         "Use the repo collection injected at session start (e.g. 'repo.my-project') for project-specific context, "
         "'global' for cross-repo knowledge that should surface everywhere, "
         "and 'workspace' as the fallback when no CLAUDE.md is present. "
-        "Run /mem-init to initialise a new scope. "
         "\n\n"
         "WHAT TO MEMORISE — store and retrieve these proactively:\n"
         "1. Current focus / session handoff: what is being worked on right now (id='current_focus'). "
@@ -80,12 +87,14 @@ def register_claude():
         "\n\n"
         "WHEN TO STORE: use mem_add after any decision, fix, or discovery worth remembering. "
         "Prefer short, precise entries. Use ttl_days for time-bounded items (tasks, reminders). "
-        "Always update current_focus (id='current_focus') at the end of a working session."
+        "Always update current_focus (id='current_focus') at the end of a working session. "
+        "Run /reflect to do this as a structured ritual. "
         "\n\n"
-        "MEMORY HYGIENE — use mem_dream when: the user asks to 'clean up', 'consolidate', or 'review' memories; "
-        "you notice contradictions or stale entries while querying; or the collection has grown large (>30 entries). "
-        "mem_dream returns a structured diff proposal — it does NOT apply changes. "
-        "After reviewing the proposal, apply changes manually with mem_add / mem_delete."
+        "CONSOLIDATION — use mem_dream when: the collection has grown large (>30 entries); "
+        "you notice contradictions or stale entries while querying; or the user asks to 'clean up' memories. "
+        "mem_dream returns a structured diff proposal — it does NOT apply changes automatically (unless auto_apply=true for deletes). "
+        "Review the proposal and apply agreed changes with mem_add / mem_delete. "
+        "The /reflect ritual prompts for consolidation automatically when the threshold is reached."
     )
 
     def update_mcp(data: dict) -> dict:
@@ -263,6 +272,10 @@ def main():
     print("\n✅ Done! Restart your AI tool(s) to start using ai-mem.")
     print(f"\n   Data will be stored at: {HOME / '.local' / 'share' / 'ai-mem'}")
     print("   Override with: AI_MEM_PATH=/your/path")
+    print("\n   Quick start:")
+    print("     /mem-init   — initialize memory for your current project")
+    print("     /reflect    — run after every task to close the learning loop")
+    print(f"\n   How the framework works: {REPO_ROOT / 'docs' / 'epistemology-framework.md'}")
 
 
 if __name__ == "__main__":

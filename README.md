@@ -4,6 +4,8 @@ Persistent semantic memory for AI agents. Stores, searches, and retrieves inform
 
 Works with **Claude Code**, **Gemini CLI**, and **Cursor**.
 
+> **Beyond memory.** Paired with the `/reflect` ritual and the Dreaming Agent, ai-mem forms an epistemology framework — a system for how agents come to *know* things, not just store them. Agents accumulate structured experience across tasks and projects, enabling a genuine Junior → Senior progression without model changes. [Read the framework docs →](docs/epistemology-framework.md)
+
 ## Workflow
 
 ai-mem is designed around a three-phase task loop:
