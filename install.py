@@ -108,43 +108,54 @@ def register_claude():
 
     patch_json(mcp_path, update_mcp)
 
-    # SessionStart hook → ~/.claude/settings.json
+    # SessionStart + UserPromptSubmit hooks + permissions → ~/.claude/settings.json
     settings_path = HOME / ".claude" / "settings.json"
     hook_cmd = f"{python_exe()} -m ai_mem.hook 2>/dev/null || true"
+    userprompt_cmd = f"{python_exe()} -m ai_mem.userprompt_hook 2>/dev/null || true"
+
+    MCP_PERMISSIONS = [
+        "mcp__ai-mem__mem_add",
+        "mcp__ai-mem__mem_query",
+        "mcp__ai-mem__mem_list",
+        "mcp__ai-mem__mem_delete",
+        "mcp__ai-mem__mem_dream",
+        "mcp__ai-mem__mem_split",
+        "mcp__ai-mem__mem_cleanup",
+        "mcp__ai-mem__mem_train",
+        "Bash(mem-dream *)",
+    ]
 
     def update_settings(data: dict) -> dict:
         hooks = data.setdefault("hooks", {})
+
         session_hooks = hooks.setdefault("SessionStart", [])
-        # avoid duplicates
-        already = any(
+        if not any(
             h.get("command") == hook_cmd
             for entry in session_hooks
             for h in entry.get("hooks", [])
-        )
-        if not already:
+        ):
             session_hooks.append({"hooks": [{"type": "command", "command": hook_cmd, "timeout": 10}]})
-        return data
 
-    # UserPromptSubmit hook → injects relevant memories before each user message (when ranker is ready)
-    userprompt_cmd = f"{python_exe()} -m ai_mem.userprompt_hook 2>/dev/null || true"
-
-    def update_userprompt_hook(data: dict) -> dict:
-        hooks = data.setdefault("hooks", {})
         up_hooks = hooks.setdefault("UserPromptSubmit", [])
-        already = any(
+        if not any(
             h.get("command") == userprompt_cmd
             for entry in up_hooks
             for h in entry.get("hooks", [])
-        )
-        if not already:
+        ):
             up_hooks.append({"hooks": [{"type": "command", "command": userprompt_cmd, "timeout": 8}]})
+
+        allow = data.setdefault("permissions", {}).setdefault("allow", [])
+        for perm in MCP_PERMISSIONS:
+            if perm not in allow:
+                allow.append(perm)
+
         return data
 
-    patch_json(settings_path, update_userprompt_hook)
+    patch_json(settings_path, update_settings)
 
     install_mem_init_command()
     install_reflect_command()
-    print("   ✓ MCP server + SessionStart + UserPromptSubmit hooks registered. Restart Claude Code to activate.")
+    print("   ✓ MCP server + hooks + permissions registered. Restart Claude Code to activate.")
 
 
 _MEM_INIT_CONTENT = """\

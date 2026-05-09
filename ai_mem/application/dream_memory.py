@@ -8,6 +8,10 @@ from datetime import datetime
 from ai_mem.domain.memory import MemoryRepository
 
 _DELETE_RE = re.compile(r"^\s*[-*•]\s+DELETE\s+(\S+)\s*:", re.MULTILINE | re.IGNORECASE)
+_ADD_TARGET_RE = re.compile(
+    r"^\s*[-*•]\s+ADD\s+(\S+)\s+\[target=([^\]]+)\]\s*:",
+    re.MULTILINE | re.IGNORECASE,
+)
 
 MODELS = {
     "haiku": "claude-haiku-4-5-20251001",
@@ -15,6 +19,28 @@ MODELS = {
 }
 
 MODES = ("single-haiku", "single-sonnet", "hier", "team")
+
+_COLLECTION_CONTEXT = """\
+COLLECTIONS PRESENT:
+{collections}
+
+COLLECTION HIERARCHY (lower → higher scope):
+  repo.<name>  →  workspace  →  global
+
+A pattern documented in a repo collection that recurs across multiple projects belongs \
+in a higher-level collection. Use the target= field on ADD proposals to express this."""
+
+_ACTION_FORMAT = """\
+Format each action as:
+- UPDATE <id>: <what to change>
+- MERGE <id1> + <id2>: <into what>
+- DELETE <id>: <reason>
+- ADD <suggested-id> [target=<collection>]: <content summary>
+
+For ADD, set target= to the collection where the entry belongs:
+  - Same collection as the source entry if it is project-specific.
+  - A higher-level collection (workspace or global) if the pattern applies broadly \
+across multiple projects — this flags it as a propagation candidate."""
 
 _P_SINGLE = """\
 You are a memory consolidation agent. The memories below come from AI assistant sessions \
@@ -25,7 +51,9 @@ You are a memory consolidation agent. The memories below come from AI assistant 
 3. **Stale entries** — entries likely outdated (explain why)
 4. **Missing principles** — patterns that emerge across entries but aren't yet documented
 
-For each item give a concrete action: UPDATE <id> / MERGE <id1>+<id2> / DELETE <id> / ADD <suggested-id>.
+{action_format}
+
+{collection_context}
 
 MEMORIES:
 {memories}"""
@@ -35,8 +63,12 @@ You are doing a fast first-pass memory consolidation. Focus on what's obvious:
 - Direct contradictions between entries
 - Clear redundancies (same fact stated in multiple entries)
 - Entries with explicit dates or version references that are likely stale
+- Patterns that recur across repo collections and belong in a higher-level collection
 
-Be concise. Reference entry IDs explicitly. A more capable model will review your output.
+Be concise. Reference entry IDs and source collections explicitly. \
+A more capable model will review your output.
+
+{collection_context}
 
 MEMORIES:
 {memories}"""
@@ -47,7 +79,11 @@ You are reviewing a fast first-pass memory consolidation. Deepen and validate it
 - Confirm or correct the first-pass findings
 - Add what it missed (subtle contradictions, cross-entry patterns)
 - Identify emergent principles across entries not yet documented
-- Produce a final actionable diff: UPDATE / MERGE / DELETE / ADD per entry ID
+- Identify cross-project patterns that should propagate to workspace or global
+
+{action_format}
+
+{collection_context}
 
 MEMORIES:
 {memories}
@@ -59,6 +95,8 @@ _P_SONNET_CRITIQUE = """\
 You are the second voice in a memory consolidation debate. A faster model gave an initial analysis.
 Challenge it: what did it miss? Where is it wrong? What subtle patterns does it overlook?
 Also add your own findings. Be direct.
+
+{collection_context}
 
 MEMORIES:
 {memories}
@@ -80,11 +118,10 @@ CRITIQUE:
 
 _P_SONNET_FINAL = """\
 Synthesize the best insights from this full debate into one clean, actionable proposal.
-Format each action as:
-- UPDATE <id>: <what to change>
-- MERGE <id1> + <id2>: <into what>
-- DELETE <id>: <reason>
-- ADD <suggested-id>: <content summary>
+
+{action_format}
+
+{collection_context}
 
 INITIAL ANALYSIS:
 {a}
@@ -99,8 +136,10 @@ REBUTTAL:
 def _format_entries(entries) -> str:
     parts = []
     for e in entries:
-        meta = f" [{e.metadata}]" if e.metadata else ""
-        parts.append(f"[{e.id}]{meta}\n{e.text}")
+        col = e.metadata.get("_collection", "?")
+        meta = {k: v for k, v in e.metadata.items() if k != "_collection"}
+        meta_str = f" [{meta}]" if meta else ""
+        parts.append(f"[{e.id}] (collection: {col}){meta_str}\n{e.text}")
     return "\n\n---\n\n".join(parts) if parts else "(empty)"
 
 
@@ -113,6 +152,20 @@ def _call(model_key: str, prompt: str) -> str:
         check=True,
     )
     return result.stdout.strip()
+
+
+def _collection_context(collections: list[str]) -> str:
+    return _COLLECTION_CONTEXT.format(collections="\n".join(f"  - {c}" for c in collections))
+
+
+def _propagation_candidates(synthesis: str, source_collections: set[str]) -> list[tuple[str, str]]:
+    """Return (entry_id, target_collection) pairs where target differs from all source collections."""
+    candidates = []
+    for m in _ADD_TARGET_RE.finditer(synthesis):
+        entry_id, target = m.group(1), m.group(2).strip()
+        if target not in source_collections:
+            candidates.append((entry_id, target))
+    return candidates
 
 
 class DreamMemoryUseCase:
@@ -140,21 +193,28 @@ class DreamMemoryUseCase:
             return "No memories found."
 
         memories = _format_entries(all_entries)
+        col_ctx = _collection_context(collections)
         ts = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         if mode == "single-haiku":
-            result = _call("haiku", _P_SINGLE.format(memories=memories))
+            result = _call("haiku", _P_SINGLE.format(
+                memories=memories, collection_context=col_ctx, action_format=_ACTION_FORMAT,
+            ))
             synthesis = result
             report = f"# Dream Log — {ts} — single:haiku\n\n{result}"
 
         elif mode == "single-sonnet":
-            result = _call("sonnet", _P_SINGLE.format(memories=memories))
+            result = _call("sonnet", _P_SINGLE.format(
+                memories=memories, collection_context=col_ctx, action_format=_ACTION_FORMAT,
+            ))
             synthesis = result
             report = f"# Dream Log — {ts} — single:sonnet\n\n{result}"
 
         elif mode == "hier":
-            a = _call("haiku", _P_HAIKU.format(memories=memories))
-            b = _call("sonnet", _P_SONNET_HIER.format(memories=memories, a=a))
+            a = _call("haiku", _P_HAIKU.format(memories=memories, collection_context=col_ctx))
+            b = _call("sonnet", _P_SONNET_HIER.format(
+                memories=memories, collection_context=col_ctx, action_format=_ACTION_FORMAT, a=a,
+            ))
             synthesis = b
             report = (
                 f"# Dream Log — {ts} — hier\n\n"
@@ -163,10 +223,14 @@ class DreamMemoryUseCase:
             )
 
         else:  # team
-            a = _call("haiku", _P_HAIKU.format(memories=memories))
-            b = _call("sonnet", _P_SONNET_CRITIQUE.format(memories=memories, a=a))
+            a = _call("haiku", _P_HAIKU.format(memories=memories, collection_context=col_ctx))
+            b = _call("sonnet", _P_SONNET_CRITIQUE.format(
+                memories=memories, collection_context=col_ctx, a=a,
+            ))
             c = _call("haiku", _P_HAIKU_REBUTTAL.format(a=a, b=b))
-            d = _call("sonnet", _P_SONNET_FINAL.format(a=a, b=b, c=c))
+            d = _call("sonnet", _P_SONNET_FINAL.format(
+                collection_context=col_ctx, action_format=_ACTION_FORMAT, a=a, b=b, c=c,
+            ))
             synthesis = d
             report = (
                 f"# Dream Log — {ts} — team\n\n"
@@ -174,6 +238,17 @@ class DreamMemoryUseCase:
                 f"## Sonnet: Critique\n\n{b}\n\n---\n\n"
                 f"## Haiku: Rebuttal\n\n{c}\n\n---\n\n"
                 f"## Sonnet: Final Synthesis\n\n{d}"
+            )
+
+        propagation = _propagation_candidates(synthesis, set(collections))
+        if propagation:
+            lines = "\n".join(
+                f"- `{eid}` → **{target}**" for eid, target in propagation
+            )
+            report += (
+                "\n\n---\n\n## Propagation Candidates\n\n"
+                "These ADD proposals target a higher-level collection "
+                "(review and apply with `mem_add` if confirmed):\n\n" + lines
             )
 
         if auto_apply:

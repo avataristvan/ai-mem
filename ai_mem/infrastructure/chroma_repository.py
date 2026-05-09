@@ -9,6 +9,13 @@ import chromadb
 from ai_mem.domain.memory import CollectionInfo, MemoryEntry, QueryResult
 
 
+def _exclude_patterns(result: dict) -> list[str]:
+    """Return IDs from a ChromaDB result, excluding entries with type='pattern'."""
+    ids = result.get("ids") or []
+    metas = result.get("metadatas") or [{}] * len(ids)
+    return [id_ for id_, meta in zip(ids, metas) if (meta or {}).get("type") != "pattern"]
+
+
 class ChromaMemoryRepository:
     def __init__(self, db_path: Path) -> None:
         db_path.mkdir(parents=True, exist_ok=True)
@@ -107,7 +114,7 @@ class ChromaMemoryRepository:
 
         now_ts = datetime.now(tz=timezone.utc).timestamp()
         result = col.get(where={"expires_at": {"$lte": now_ts}})
-        ids = result.get("ids") or []
+        ids = _exclude_patterns(result)
         if ids:
             col.delete(ids=ids)
         return len(ids)
@@ -158,7 +165,7 @@ class ChromaMemoryRepository:
 
         cutoff = datetime.now(tz=timezone.utc).timestamp() - stale_after_days * 86400
         result = col.get(where={"last_accessed_at": {"$lt": cutoff}})
-        ids = result.get("ids") or []
+        ids = _exclude_patterns(result)
         if ids:
             col.delete(ids=ids)
         return len(ids)

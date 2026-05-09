@@ -43,9 +43,22 @@ mem_add(
     documents=[<learning or blocker>],
     collection=<active>,
     type="feedback",
-    ids=["feedback_<slug>"],   # or "antipattern_<slug>" for blockers
+    ids=["feedback_<slug>"],
 )
 ```
+
+If a blocker describes a failed approach, store it as an anti-pattern instead:
+
+```
+mem_add(
+    documents=["Tried: <approach>\nFailed because: <reason>\nInstead: <alternative>"],
+    collection=<active>,
+    type="anti-pattern",
+    ids=["antipattern_<slug>"],
+)
+```
+
+The `Tried:` field makes the entry self-retrieving — future queries about the same approach will surface it automatically without any special retrieval logic.
 
 Skip if the user has nothing to add.
 
