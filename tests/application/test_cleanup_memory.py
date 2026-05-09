@@ -46,3 +46,48 @@ def test_cleanup_without_stale_param_only_runs_ttl(tmp_repo):
     report = CleanupMemoryUseCase(tmp_repo).execute(collection="test_col")
     assert report.collections["test_col"].expired == 0
     assert report.collections["test_col"].stale == 0
+
+
+def test_pattern_entries_exempt_from_stale_cleanup(tmp_repo):
+    add = AddMemoryUseCase(tmp_repo)
+    add.execute(
+        collection="test_col",
+        documents=["stale fact", "durable pattern"],
+        ids=["fact", "pat"],
+        metadatas=[{"type": "fact"}, {"type": "pattern"}],
+    )
+    _backdate(tmp_repo, "test_col", "fact", days_ago=60)
+    _backdate(tmp_repo, "test_col", "pat", days_ago=60)
+
+    CleanupMemoryUseCase(tmp_repo).execute(collection="test_col", stale_after_days=30)
+
+    remaining = GetMemoryUseCase(tmp_repo).execute("test_col", ["fact", "pat"])
+    assert {e.id for e in remaining} == {"pat"}
+
+
+def _backdate_expiry(repo, collection: str, id_: str) -> None:
+    """Set expires_at to the past so the entry is considered expired."""
+    existing = repo.get_by_ids(collection, [id_])
+    if not existing:
+        return
+    entry = existing[0]
+    entry.metadata["expires_at"] = time.time() - 1
+    repo.upsert(collection, [entry])
+
+
+def test_pattern_entries_exempt_from_ttl_expiry(tmp_repo):
+    add = AddMemoryUseCase(tmp_repo)
+    add.execute(
+        collection="test_col",
+        documents=["expiring fact", "permanent pattern"],
+        ids=["fact", "pat"],
+        ttl_days=1,
+        metadatas=[{"type": "fact"}, {"type": "pattern"}],
+    )
+    _backdate_expiry(tmp_repo, "test_col", "fact")
+    _backdate_expiry(tmp_repo, "test_col", "pat")
+
+    CleanupMemoryUseCase(tmp_repo).execute(collection="test_col")
+
+    remaining = GetMemoryUseCase(tmp_repo).execute("test_col", ["fact", "pat"])
+    assert {e.id for e in remaining} == {"pat"}
