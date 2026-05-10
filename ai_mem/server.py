@@ -201,12 +201,19 @@ async def list_tools() -> list[types.Tool]:
             description=(
                 "Run a training step for the learned re-ranker. "
                 "Reads the query buffer, assigns labels from access history, and performs one gradient step. "
-                "Omit 'collection' to train all known collections."
+                "Pass 'negative_ids' to explicitly mark entries as unhelpful (0.0) — "
+                "overrides the automatic positive label set at query time. "
+                "Omit 'collection' to train all known collections (negative_ids ignored in that mode)."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "collection": {"type": "string", "description": "Collection to train (omit for all)"},
+                    "negative_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Memory IDs to label as 0.0 (not useful this session). Requires 'collection'.",
+                    },
                 },
                 "required": [],
             },
@@ -315,8 +322,10 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     if name == "mem_train":
         now = time.time()
         col_arg = arguments.get("collection")
+        negative_ids = arguments.get("negative_ids") or []
+        explicit_labels = {id_: 0.0 for id_ in negative_ids} if negative_ids else None
         if col_arg:
-            metrics = _train_ranker.train_step(col_arg, now)
+            metrics = _train_ranker.train_step(col_arg, now, explicit_labels=explicit_labels)
             out = {"collection": col_arg, "n": metrics.n, "loss": metrics.loss, "skipped": metrics.skipped}
         else:
             # Deduplicate by scope key: hybrid-mode group members all map to the

@@ -64,25 +64,38 @@ Skip if the user has nothing to add.
 
 ---
 
-## Step 3.5 — Outcome signal
+## Step 3.5 — Feedback signal
+
+**Outdated or misleading entries (always, no commit needed)**
+
+Review the conversation: were any retrieved memories outdated, misleading, or contradicted by reality?
+
+For each: reform in place as anti-pattern — the content change is the signal, no ranker label needed:
+
+```
+mem_add(
+    documents=["Tried: <original claim>\nOutdated/wrong because: <reason>\nInstead: <what is true now>"],
+    ids=[<original_id>],
+    collection=<active>,
+    type="anti-pattern",
+)
+```
+
+Completely wrong with no useful lesson → `mem_delete` instead.
+
+Skip silently if nothing was outdated.
+
+---
+
+**Positive signal**
 
 Silently check: `git log --oneline --since="session start" 2>/dev/null | head -5`
 
-If one or more commits happened during this session:
+If commits found: `mem_train(collection=<active>)` — no user confirmation needed.
 
-> **"Diese Session hat einen git-commit produziert — soll ich die abgerufenen Memories als hilfreich markieren?"**
+Skip silently if no commit was found.
 
-If yes, run a training step on the active collection:
-
-```
-mem_train(collection=<active>)
-```
-
-This tells the re-ranker that entries retrieved this session contributed to a productive outcome. Over time the ranker learns which entries are associated with sessions that ship.
-
-Skip silently if: no commit found, or user says no.
-
-> **Note:** `mem_train` currently derives labels from the 7-day re-access window. Explicit outcome labels (`label=1.0` per injected entry) are a planned code extension — this step already closes the feedback loop as opt-in convention.
+Note in the Close summary if mem_train ran or if entries were reformed.
 
 ---
 

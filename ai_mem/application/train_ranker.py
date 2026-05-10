@@ -39,7 +39,7 @@ class TrainRankerUseCase:
 
     def _scope_name(self, collection: str) -> str:
         s = self._scope_resolver(collection)
-        return s.group if s.mode == "hybrid" else s.name
+        return s.group or s.name
 
     def record_query(
         self,
@@ -68,11 +68,24 @@ class TrainRankerUseCase:
         self._storage.append_examples(scope, examples)
         self._storage.prune_buffer(scope, self._buffer_max)
 
-    def train_step(self, collection: str, now: float) -> TrainingMetrics:
+    def train_step(
+        self,
+        collection: str,
+        now: float,
+        explicit_labels: dict[str, float] | None = None,
+    ) -> TrainingMetrics:
         scope = self._scope_name(collection)
         buffer = self._storage.load_buffer(scope)
         if not buffer:
             return TrainingMetrics(n=0, skipped=True)
+
+        # Explicit overrides take precedence over the access-window heuristic.
+        # This lets the caller signal "this entry was not useful this session"
+        # (0.0) even if it was returned to the caller (which normally sets 1.0).
+        if explicit_labels:
+            for ex in buffer:
+                if ex.memory_id in explicit_labels:
+                    ex.target_future_access = explicit_labels[ex.memory_id]
 
         label_cutoff = self._label_window_days * 86400
 
