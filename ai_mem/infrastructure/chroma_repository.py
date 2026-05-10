@@ -9,11 +9,14 @@ import chromadb
 from ai_mem.domain.memory import CollectionInfo, MemoryEntry, QueryResult
 
 
+_PERMANENT_TYPES = {"pattern", "anti-pattern"}
+
+
 def _exclude_patterns(result: dict) -> list[str]:
-    """Return IDs from a ChromaDB result, excluding entries with type='pattern'."""
+    """Return IDs from a ChromaDB result, excluding permanent entries (pattern, anti-pattern)."""
     ids = result.get("ids") or []
     metas = result.get("metadatas") or [{}] * len(ids)
-    return [id_ for id_, meta in zip(ids, metas) if (meta or {}).get("type") != "pattern"]
+    return [id_ for id_, meta in zip(ids, metas) if (meta or {}).get("type") not in _PERMANENT_TYPES]
 
 
 class ChromaMemoryRepository:
