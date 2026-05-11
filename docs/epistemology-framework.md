@@ -64,12 +64,21 @@ The re-ranker is the implicit learning signal: entries that get retrieved and ac
 
 Raw memory entries store facts in isolation. Typed edges model *relationships* between knowledge — which patterns contradict each other, which fixes address which bugs, which anti-patterns follow from which choices.
 
+Both entry types have canonical formats that make them self-retrieving and scannable during dream consolidation:
+
+| Type | Format |
+|---|---|
+| `pattern` | `Rule: <rule>\nWhen: <context>\nWhy: <invariant>` |
+| `anti-pattern` | `Tried: <approach>\nFailed because: <reason>\nInstead: <alternative>` |
+
+The leading keyword (`Rule:`, `Tried:`) is the self-retrieving hook — a future query about the same approach will surface the entry without special retrieval logic.
+
 ```
-# After storing a best-practice pattern:
-mem_add(documents=["Always use AddMemoryUseCase in tests — it injects timestamps automatically."],
+# After storing a best-practice pattern (canonical format):
+mem_add(documents=["Rule: Use AddMemoryUseCase in tests, not repo.upsert() directly.\nWhen: Writing tests that insert memory entries.\nWhy: AddMemoryUseCase injects required timestamps; ChromaDB rejects empty metadata dicts."],
         ids=["pattern_add_via_use_case"], type="pattern", collection="repo.ai-mem")
 
-# After storing the matching anti-pattern:
+# After storing the matching anti-pattern (canonical format):
 mem_add(documents=["Tried: calling repo.upsert() directly in tests\nFailed because: ChromaDB rejects empty metadata dicts\nInstead: use AddMemoryUseCase which always injects timestamps"],
         ids=["antipattern_direct_upsert"], type="anti-pattern", collection="repo.ai-mem")
 

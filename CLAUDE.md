@@ -59,7 +59,7 @@ Capability-centric DDD — three layers, no upward imports.
 - `mem_delete` with no `ids` drops the entire collection; repo signals this by returning `-1`.
 - `current_focus` (id `"current_focus"`) is the primary context entry per collection. The Stop hook reminds the agent to update it when files changed.
 - `RankingFeatures.cosine_similarity` = `1 - chromadb_distance` (higher = more relevant). Never invert.
-- `_FETCH_K = 20` in `QueryMemoryUseCase` — always over-fetches 20 candidates before re-ranking; `n_results` only controls final truncation.
+- `_FETCH_K = 50` in `QueryMemoryUseCase` — always over-fetches 50 candidates before re-ranking; `n_results` only controls final truncation.
 - Hybrid mode: buffer and weights files are keyed by **group name**, not collection name. `RankerRegistry.scope_key()` resolves this.
 - `source_collection: str | None` on `TrainingExample` — `None` means the field was absent in older buffer files (backwards-compat on deserialize).
 - `_try_seed` in `hook.py` checks `collection count == 0` (or not listed) before seeding; wrapped in `try/except` so it is always silent.
@@ -72,6 +72,8 @@ Capability-centric DDD — three layers, no upward imports.
 - `BM25MemoryRepository.query()` forwards `type_filter` to the inner repo — filter is applied at the ChromaDB level before BM25 re-ranking.
 - `posttool_hook.py` imports `GLOBAL_COLLECTION`, `WORKSPACE_COLLECTION`, and `detect_repo_context` at module level (not lazily inside `main()`) so tests can patch them via `patch.object(hook, ...)`. This is the same pattern as `userprompt_hook.py`. Hooks that use lazy `from ... import` inside `main()` are not patchable at module scope.
 - PostToolUse hook does NOT wrap the inner repo with `BM25MemoryRepository` — BM25 adds latency and the hook only needs semantic proximity for label propagation, not high-precision retrieval.
+- `mem_dream` accepts an optional `focus_hint: str` to steer consolidation. For expert collections (`subagent.*`), pass: `"Cross-project learnings from a <role> agent. Flag entries too project-specific to keep. Prefer DELETE over MERGE for project-specific entries."` — this distinguishes transferable patterns from project-specific facts.
+- Dream preamble pattern: `_TYPE_RULES` + `focus_hint` are prepended to the `memories` string before each Claude call, not injected into prompt template strings. Add context to dreams this way — not by modifying the prompt constants.
 
 ## Typed Causal Edges
 
