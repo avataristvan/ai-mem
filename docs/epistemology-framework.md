@@ -51,13 +51,36 @@ The tool provides reliable storage and retrieval:
 
 - **ChromaDB** for semantic vector search
 - **BM25 hybrid layer** (optional) — fuses cosine + BM25 scores over 50 candidates
-- **Adaptive MLP re-ranker** `[11→32→16→1]` that learns from access patterns over time
+- **Adaptive MLP re-ranker** `[10→32→16→1]` that learns from access patterns over time
 - **TTL + forgetting curve** — `mem_cleanup` with `stale_after_days` removes entries not accessed within a window
-- **Typed entries** (`feedback`, `project`, `reference`, `user`) for filtered retrieval
+- **Typed entries** (`feedback`, `project`, `reference`, `user`, `pattern`, `anti-pattern`) for filtered retrieval
+- **Typed causal edges** — directional relationships between entries (`contradicts`, `fixes`, `causes`, `related`)
 
 The re-ranker is the implicit learning signal: entries that get retrieved and accessed again within a 7-day window receive a positive label. BCE loss + 0.3× contrastive loss. No explicit feedback labels needed. Without PyTorch, the system falls back to cosine ranking.
 
 **Split-hint detection** is also code-backed: entries with `access_count ≥ 5` and `text ≥ 150 chars` are flagged in every `mem_query` response as candidates for splitting.
+
+#### Typed Causal Edges — Knowledge as a Graph
+
+Raw memory entries store facts in isolation. Typed edges model *relationships* between knowledge — which patterns contradict each other, which fixes address which bugs, which anti-patterns follow from which choices.
+
+```
+# After storing a best-practice pattern:
+mem_add(documents=["Always use AddMemoryUseCase in tests — it injects timestamps automatically."],
+        ids=["pattern_add_via_use_case"], type="pattern", collection="repo.ai-mem")
+
+# After storing the matching anti-pattern:
+mem_add(documents=["Tried: calling repo.upsert() directly in tests\nFailed because: ChromaDB rejects empty metadata dicts\nInstead: use AddMemoryUseCase which always injects timestamps"],
+        ids=["antipattern_direct_upsert"], type="anti-pattern", collection="repo.ai-mem")
+
+# Link them:
+mem_link(source_id="antipattern_direct_upsert", target_id="pattern_add_via_use_case",
+         edge_type="contradicts", collection="repo.ai-mem")
+```
+
+Now when `mem_query` retrieves the pattern, the anti-pattern surfaces automatically alongside it (and vice versa). Budget: 2 linked entries per query. Linked entries are tagged `via_edge` and `via_source` in their metadata.
+
+This is the difference between *storing facts* and *storing a knowledge graph*. A senior engineer does not just know what the best practice is — they know what mistake it replaces and why. The edge makes that relationship retrievable, not just inferrable.
 
 ### 3. Dreaming Agent — consolidation
 
@@ -196,6 +219,10 @@ Task
 
 ---
 
+## Comparison: The Broader Field
+
+A full competitive analysis (MemPalace, claude-mem, mcp-memory-service, OB1) is maintained in [docs/ai-mem-vs-memPalace.md](ai-mem-vs-memPalace.md).
+
 ## Comparison: OB1 + OpenClaw vs. ai-mem framework
 
 | Dimension | OB1 + OpenClaw | ai-mem framework |
@@ -227,7 +254,9 @@ The framework is epistemological: it concerns how knowledge is acquired and stru
 |---|---|
 | ChromaDB storage, TTL, typed entries | Implemented |
 | BM25 hybrid retrieval | Implemented |
-| Adaptive MLP re-ranker (`[11→32→16→1]`) | Implemented |
+| Adaptive MLP re-ranker (`[10→32→16→1]`) | Implemented |
+| Typed causal edges (`mem_link`, `mem_edges`) | Implemented |
+| PostToolUse passive training signal | Implemented |
 | Split-hint detection | Implemented |
 | `mem_split` (manual) | Implemented |
 | `mem_dream` (manual trigger) | Implemented |

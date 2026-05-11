@@ -280,6 +280,46 @@ async def list_tools() -> list[types.Tool]:
     ]
 
 
+_PATTERN_LINK_THRESHOLD = 0.4
+_PATTERN_LINK_MAX = 2
+
+
+def _suggest_pattern_links(collection: str, documents: list[str], stored_ids: list[str]) -> str:
+    """Return a suggestion block for linking anti-pattern entries to related patterns.
+
+    Queries for type=pattern entries similar to each stored document. Returns an
+    empty string when no matches exceed the threshold or when the query fails.
+    """
+    try:
+        lines: list[str] = []
+        seen_pairs: set[tuple[str, str]] = set()
+        for doc, source_id in zip(documents, stored_ids):
+            results = _query.execute(
+                collection=collection,
+                query=doc,
+                n_results=_PATTERN_LINK_MAX,
+                type_filter="pattern",
+            )
+            for r in results:
+                if r.score < _PATTERN_LINK_THRESHOLD:
+                    continue
+                pair = (source_id, r.id)
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+                preview = r.text[:60].replace("\n", " ")
+                lines.append(
+                    f'  mem_link(source_id="{source_id}", target_id="{r.id}",'
+                    f' edge_type="contradicts", collection="{collection}")'
+                )
+                lines.append(f"  # {preview}")
+        if not lines:
+            return ""
+        return "💡 Related patterns found — consider linking:\n" + "\n".join(lines)
+    except Exception:
+        return ""
+
+
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     collection = arguments.get("collection") or DEFAULT_COLLECTION
@@ -300,7 +340,18 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             metadatas=metadatas,
             ttl_days=arguments.get("ttl_days"),
         )
-        return [types.TextContent(type="text", text=f"Stored {count} entry/entries in '{collection}'.")]
+        base_text = f"Stored {count} entry/entries in '{collection}'."
+
+        if type_tag == "anti-pattern":
+            suggestion = _suggest_pattern_links(
+                collection=collection,
+                documents=arguments["documents"],
+                stored_ids=arguments["ids"],
+            )
+            if suggestion:
+                base_text = f"{base_text}\n\n{suggestion}"
+
+        return [types.TextContent(type="text", text=base_text)]
 
     if name == "mem_query":
         results = _query.execute(
