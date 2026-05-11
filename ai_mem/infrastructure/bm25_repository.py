@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from rank_bm25 import BM25Okapi
 
-from ai_mem.domain.memory import CollectionInfo, MemoryEntry, QueryResult
+from ai_mem.domain.memory import CollectionInfo, MemoryEdge, MemoryEntry, QueryResult
 
 _BM25_FETCH = 50
 
@@ -101,3 +101,9 @@ class BM25MemoryRepository:
 
     def delete_stale(self, collection: str, stale_after_days: float) -> int:
         return self._inner.delete_stale(collection, stale_after_days)
+
+    def add_edge(self, collection: str, source_id: str, edge: MemoryEdge) -> None:
+        self._inner.add_edge(collection, source_id, edge)
+
+    def get_edges(self, collection: str, entry_id: str) -> list[MemoryEdge]:
+        return self._inner.get_edges(collection, entry_id)

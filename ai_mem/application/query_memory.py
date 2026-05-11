@@ -64,4 +64,41 @@ class QueryMemoryUseCase:
         self._track_access.execute(collection, list(returned_ids))
         self._train_ranker.record_query(collection, candidates, features, now, returned_ids=returned_ids)
 
+        results = self._append_linked(collection, results, returned_ids)
         return results
+
+    def _append_linked(
+        self, collection: str, results: list[QueryResult], result_ids: set[str]
+    ) -> list[QueryResult]:
+        """Follow 1-hop edges from result entries and append linked entries (budget: 2)."""
+        linked: list[QueryResult] = []
+        try:
+            for result in results:
+                if len(linked) >= 2:
+                    break
+                edges = self._repo.get_edges(collection, result.id)
+                for edge in edges:
+                    if len(linked) >= 2:
+                        break
+                    if edge.target_id in result_ids:
+                        continue
+                    entries = self._repo.get_by_ids(collection, [edge.target_id])
+                    if not entries:
+                        continue
+                    entry = entries[0]
+                    linked_meta = dict(entry.metadata)
+                    linked_meta["via_edge"] = edge.edge_type
+                    linked_meta["via_source"] = result.id
+                    linked.append(
+                        QueryResult(
+                            rank=len(results) + len(linked) + 1,
+                            id=entry.id,
+                            score=0.0,
+                            text=entry.text,
+                            metadata=linked_meta,
+                        )
+                    )
+                    result_ids.add(edge.target_id)
+        except Exception:
+            pass
+        return results + linked

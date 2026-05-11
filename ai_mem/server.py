@@ -10,12 +10,14 @@ import mcp.types as types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-from ai_mem.application.dream_memory import DreamMemoryUseCase, MODES
+from ai_mem.application.add_edge import AddEdgeUseCase
 from ai_mem.application.add_memory import AddMemoryUseCase
-from ai_mem.application.detect_split_hints import DetectSplitHintsUseCase
 from ai_mem.application.build_features import BuildFeaturesUseCase
 from ai_mem.application.cleanup_memory import CleanupMemoryUseCase
 from ai_mem.application.delete_memory import DeleteMemoryUseCase
+from ai_mem.application.detect_split_hints import DetectSplitHintsUseCase
+from ai_mem.application.dream_memory import DreamMemoryUseCase, MODES
+from ai_mem.application.get_edges import GetEdgesUseCase
 from ai_mem.application.list_collections import ListCollectionsUseCase
 from ai_mem.application.list_entries import ListEntriesUseCase
 from ai_mem.application.load_ranker_config import LoadRankerConfigUseCase
@@ -69,6 +71,8 @@ _list_entries = ListEntriesUseCase(_repo)
 _detect_split_hints = DetectSplitHintsUseCase()
 _dream = DreamMemoryUseCase(_repo)
 _split = SplitMemoryUseCase(_repo, _add)
+_add_edge = AddEdgeUseCase(_repo)
+_get_edges = GetEdgesUseCase(_repo)
 
 server = Server("ai-mem")
 
@@ -236,6 +240,43 @@ async def list_tools() -> list[types.Tool]:
                 "required": [],
             },
         ),
+        types.Tool(
+            name="mem_link",
+            description=(
+                "Add a typed causal edge between two memory entries. "
+                "Useful for linking an anti-pattern to the pattern it contradicts, "
+                "a bug fix to the cause, or related concepts. "
+                "When either entry is retrieved by mem_query, its linked partner is automatically "
+                "appended to the results (1-hop, budget: 2 linked entries per query). "
+                "Edge types: 'contradicts' | 'fixes' | 'causes' | 'related'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source_id": {"type": "string", "description": "ID of the source entry"},
+                    "target_id": {"type": "string", "description": "ID of the target entry"},
+                    "edge_type": {
+                        "type": "string",
+                        "enum": ["contradicts", "fixes", "causes", "related"],
+                        "description": "Relationship type from source to target",
+                    },
+                    "collection": {"type": "string", "description": f"Collection containing both entries (default: '{DEFAULT_COLLECTION}')"},
+                },
+                "required": ["source_id", "target_id", "edge_type"],
+            },
+        ),
+        types.Tool(
+            name="mem_edges",
+            description="List all outgoing causal edges for a memory entry.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "entry_id": {"type": "string", "description": "ID of the entry to inspect"},
+                    "collection": {"type": "string", "description": f"Collection containing the entry (default: '{DEFAULT_COLLECTION}')"},
+                },
+                "required": ["entry_id"],
+            },
+        ),
     ]
 
 
@@ -360,6 +401,29 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         succeeded = sum(1 for r in results if not r.skipped)
         summary = f"Split {succeeded}/{total} entries."
         return [types.TextContent(type="text", text=f"{summary}\n{json.dumps(out, indent=2)}")]
+
+    if name == "mem_link":
+        try:
+            _add_edge.execute(
+                collection=collection,
+                source_id=arguments["source_id"],
+                target_id=arguments["target_id"],
+                edge_type=arguments["edge_type"],
+            )
+            return [types.TextContent(
+                type="text",
+                text=f"Linked '{arguments['source_id']}' --[{arguments['edge_type']}]--> '{arguments['target_id']}' in '{collection}'.",
+            )]
+        except ValueError as exc:
+            return [types.TextContent(type="text", text=f"Error: {exc}")]
+
+    if name == "mem_edges":
+        edges = _get_edges.execute(
+            collection=collection,
+            entry_id=arguments["entry_id"],
+        )
+        out = [{"target_id": e.target_id, "edge_type": e.edge_type} for e in edges]
+        return [types.TextContent(type="text", text=json.dumps(out, indent=2))]
 
     raise ValueError(f"Unknown tool: {name}")
 

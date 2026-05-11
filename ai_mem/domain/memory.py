@@ -3,7 +3,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Protocol
+from typing import Literal, Protocol
+
+EdgeType = Literal["contradicts", "fixes", "causes", "related"]
+
+
+@dataclass
+class MemoryEdge:
+    target_id: str
+    edge_type: EdgeType
 
 
 @dataclass
@@ -76,4 +84,12 @@ class MemoryRepository(Protocol):
 
     def get_all(self, collection: str) -> list[MemoryEntry]:
         """Return every entry in a collection (no filtering, no ranking)."""
+        ...
+
+    def add_edge(self, collection: str, source_id: str, edge: MemoryEdge) -> None:
+        """Append a causal edge to source_id's metadata. Idempotent on same (target_id, edge_type)."""
+        ...
+
+    def get_edges(self, collection: str, entry_id: str) -> list[MemoryEdge]:
+        """Return all outgoing edges for entry_id. Empty list when none exist or entry missing."""
         ...

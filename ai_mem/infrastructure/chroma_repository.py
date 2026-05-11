@@ -1,15 +1,25 @@
 """ChromaDB implementation of MemoryRepository."""
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 import chromadb
 
-from ai_mem.domain.memory import CollectionInfo, MemoryEntry, QueryResult
+from ai_mem.domain.memory import CollectionInfo, MemoryEdge, MemoryEntry, QueryResult
 
 
 _PERMANENT_TYPES = {"pattern", "anti-pattern"}
+
+
+def _parse_edges(raw: str) -> list[MemoryEdge]:
+    """Parse a JSON-encoded edge list from metadata. Returns [] on any parse error."""
+    try:
+        items = json.loads(raw)
+        return [MemoryEdge(target_id=item["target_id"], edge_type=item["edge_type"]) for item in items]
+    except Exception:
+        return []
 
 
 def _exclude_patterns(result: dict) -> list[str]:
@@ -172,3 +182,40 @@ class ChromaMemoryRepository:
         if ids:
             col.delete(ids=ids)
         return len(ids)
+
+    def add_edge(self, collection: str, source_id: str, edge: MemoryEdge) -> None:
+        try:
+            col = self._client.get_collection(collection)
+        except Exception:
+            return
+
+        result = col.get(ids=[source_id])
+        if not result.get("ids"):
+            return
+
+        existing_meta = dict((result.get("metadatas") or [{}])[0] or {})
+        edges = _parse_edges(existing_meta.get("edges", "[]"))
+
+        # Dedup: skip if the same (target_id, edge_type) already exists
+        for e in edges:
+            if e.target_id == edge.target_id and e.edge_type == edge.edge_type:
+                return
+
+        edges.append(edge)
+        existing_meta["edges"] = json.dumps(
+            [{"target_id": e.target_id, "edge_type": e.edge_type} for e in edges]
+        )
+        col.update(ids=[source_id], metadatas=[existing_meta])
+
+    def get_edges(self, collection: str, entry_id: str) -> list[MemoryEdge]:
+        try:
+            col = self._client.get_collection(collection)
+        except Exception:
+            return []
+
+        result = col.get(ids=[entry_id])
+        if not result.get("ids"):
+            return []
+
+        meta = (result.get("metadatas") or [{}])[0] or {}
+        return _parse_edges(meta.get("edges", "[]"))
