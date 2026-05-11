@@ -11,8 +11,9 @@ pip install -e ".[ml]"      # with PyTorch re-ranker
 pip install -e ".[dream]"   # with Anthropic SDK for mem-dream
 python3 -m ai_mem.server    # run MCP server directly
 python3 install.py          # register with Claude Code / Gemini CLI / Cursor
-python3 -m ai_mem.hook      # run SessionStart hook manually
-python3 -m ai_mem.stop_hook # run Stop hook manually (from a git repo dir)
+python3 -m ai_mem.hook          # run SessionStart hook manually
+python3 -m ai_mem.stop_hook     # run Stop hook manually (from a git repo dir)
+python3 -m ai_mem.posttool_hook # run PostToolUse hook manually (pipe JSON payload on stdin)
 python -m pytest tests/ -v  # run tests
 mem-dream --dry-run         # preview entries without API calls
 mem-dream --mode hier       # consolidate all collections (hier = default)
@@ -41,7 +42,11 @@ Capability-centric DDD — three layers, no upward imports.
 - `NullRanker` — returns `cosine_similarity` scores unchanged; active when torch is absent
 - `RankerStorage` — implements `TrainingBufferRepository`; JSONL buffer + `.pt` weights per scope key
 
-**Adapter** (`ai_mem/server.py`) — wires use cases at module load, exposes MCP tools. `hook.py` / `stop_hook.py` are Claude Code lifecycle hooks.
+**Adapter** (`ai_mem/server.py`) — wires use cases at module load, exposes MCP tools. Claude Code lifecycle hooks:
+- `hook.py` — SessionStart: injects current_focus + collection routing
+- `userprompt_hook.py` — UserPromptSubmit: injects relevant memories when ranker is trained enough
+- `pretool_hook.py` — PreToolUse(Write|Edit): injects relevant past experiences before a file is touched
+- `posttool_hook.py` — PostToolUse(Write|Edit): silent passive training signal; queries global + repo collections with the edited file path, updating `last_accessed_at` on matching entries so `train_step` labels them positive in the 7-day window. No output to Claude.
 
 **Utility modules** (not use-case classes — standalone functions, no DI):
 - `session_stats.py` — `record_injection` / `injection_rate`; rolling 20-session JSONL at `{DB_PATH}/session_stats.json`
@@ -63,3 +68,5 @@ Capability-centric DDD — three layers, no upward imports.
 - `type` metadata field: `mem_add` accepts an optional `type` param (e.g. `"feedback"`, `"reference"`, `"project"`, `"user"`). `mem_query` accepts a matching `type` filter. ChromaDB `$and` is used when both `max_age_days` and `type_filter` are set.
 - `mem_list` with a `collection` param returns entry titles instead of collection counts; backed by `ListEntriesUseCase` and `get_all()`.
 - `BM25MemoryRepository.query()` forwards `type_filter` to the inner repo — filter is applied at the ChromaDB level before BM25 re-ranking.
+- `posttool_hook.py` imports `GLOBAL_COLLECTION`, `WORKSPACE_COLLECTION`, and `detect_repo_context` at module level (not lazily inside `main()`) so tests can patch them via `patch.object(hook, ...)`. This is the same pattern as `userprompt_hook.py`. Hooks that use lazy `from ... import` inside `main()` are not patchable at module scope.
+- PostToolUse hook does NOT wrap the inner repo with `BM25MemoryRepository` — BM25 adds latency and the hook only needs semantic proximity for label propagation, not high-precision retrieval.

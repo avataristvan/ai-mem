@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """ai-mem installer — registers the MCP server with Claude Code, Gemini CLI, and/or Cursor."""
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -118,10 +117,11 @@ def register_claude():
 
     patch_json(mcp_path, update_mcp)
 
-    # SessionStart + UserPromptSubmit hooks + permissions → ~/.claude/settings.json
+    # SessionStart + UserPromptSubmit + PreToolUse + PostToolUse hooks + permissions → ~/.claude/settings.json
     settings_path = HOME / ".claude" / "settings.json"
     hook_cmd = f"{python_exe()} -m ai_mem.hook 2>/dev/null || true"
     userprompt_cmd = f"{python_exe()} -m ai_mem.userprompt_hook 2>/dev/null || true"
+    posttool_cmd = f"{python_exe()} -m ai_mem.posttool_hook 2>/dev/null || true"
 
     MCP_PERMISSIONS = [
         "mcp__ai-mem__mem_add",
@@ -153,6 +153,14 @@ def register_claude():
             for h in entry.get("hooks", [])
         ):
             up_hooks.append({"hooks": [{"type": "command", "command": userprompt_cmd, "timeout": 8}]})
+
+        pt_hooks = hooks.setdefault("PostToolUse", [])
+        if not any(
+            h.get("command") == posttool_cmd
+            for entry in pt_hooks
+            for h in entry.get("hooks", [])
+        ):
+            pt_hooks.append({"matcher": "Write|Edit", "hooks": [{"type": "command", "command": posttool_cmd, "timeout": 10}]})
 
         allow = data.setdefault("permissions", {}).setdefault("allow", [])
         for perm in MCP_PERMISSIONS:
