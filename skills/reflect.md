@@ -123,6 +123,34 @@ mem_add(
 
 ---
 
+## Step 4.5 — Expert propagation (only if subagents produced [retro] blocks)
+
+For each subagent that contributed a `learned:` line in Step 1, decide: is this learning about **how to approach a problem** (technique, process, pattern) — or about **what was done in this project** (specific decision, project fact)?
+
+- Process/technique → candidate for the expert collection
+- Project-specific → stays in the project collection only
+
+Ask for each candidate:
+
+> **"Soll dieses Learning für `<agent-type>` cross-projekt gespeichert werden?"**
+
+If yes:
+
+```
+mem_add(
+    documents=[<learning text>],
+    collection="subagent.<agent-type>",   # e.g. "subagent.the-coder"
+    type="feedback",
+    ids=["<agent-type>_<slug>"],
+)
+```
+
+The expert collection accumulates across all projects. Over time it gives the agent genuine cross-project intuition — the same way a senior engineer recognizes patterns they've seen before, regardless of the specific codebase.
+
+Skip entirely if no subagents were used or no `[retro]` blocks were found.
+
+---
+
 ## Step 5 — Update current_focus
 
 Ask: **"Was ist dein nächster Fokus?"** (or derive from the confirmed todos if obvious).

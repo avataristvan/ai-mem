@@ -8,6 +8,24 @@ from pathlib import Path
 import time
 
 DB_PATH = Path(os.environ.get("AI_MEM_PATH", Path.home() / ".local" / "share" / "ai-mem"))
+
+# Module-level imports for patchability in tests (same pattern as posttool_hook.py).
+try:
+    from ai_mem.agent_context import detect_for_session_start, write_to_env_file
+    from ai_mem.application.get_memory import GetMemoryUseCase
+    from ai_mem.infrastructure.chroma_repository import ChromaMemoryRepository
+    from ai_mem.repo_context import GLOBAL_COLLECTION, WORKSPACE_COLLECTION, detect_repo_context
+    from ai_mem.session_stats import record_injection
+except ImportError:
+    detect_for_session_start = None  # type: ignore[assignment]
+    write_to_env_file = None  # type: ignore[assignment]
+    GetMemoryUseCase = None  # type: ignore[assignment]
+    ChromaMemoryRepository = None  # type: ignore[assignment]
+    GLOBAL_COLLECTION = "global"
+    WORKSPACE_COLLECTION = "workspace"
+    detect_repo_context = None  # type: ignore[assignment]
+    record_injection = None  # type: ignore[assignment]
+
 FOCUS_ID = "current_focus"
 _STATS_PATH = DB_PATH / "session_stats.json"
 _SESSION_START_FILE = DB_PATH / "session_start.txt"
@@ -58,22 +76,20 @@ def main():
     except Exception:
         stdin_json = {}
 
+    if (detect_for_session_start is None or write_to_env_file is None
+            or ChromaMemoryRepository is None or GetMemoryUseCase is None
+            or detect_repo_context is None or record_injection is None):
+        return
+
+    agent_type: str | None = None
     try:
-        from ai_mem.agent_context import detect_for_session_start, write_to_env_file
         agent_ctx = detect_for_session_start(stdin_json)
+        agent_type = agent_ctx.agent_type
         write_to_env_file(agent_ctx)
         if not agent_ctx.should_inject:
             return
     except Exception:
         pass
-
-    try:
-        from ai_mem.application.get_memory import GetMemoryUseCase
-        from ai_mem.infrastructure.chroma_repository import ChromaMemoryRepository
-        from ai_mem.repo_context import GLOBAL_COLLECTION, WORKSPACE_COLLECTION, detect_repo_context
-        from ai_mem.session_stats import record_injection
-    except ImportError:
-        return
 
     if not DB_PATH.exists():
         return
@@ -91,6 +107,12 @@ def main():
         repo_focus = _focus_text(get_memory, ctx.collection) if ctx.collection != WORKSPACE_COLLECTION else None
         global_focus = _focus_text(get_memory, GLOBAL_COLLECTION)
 
+        expert_focus: str | None = None
+        expert_collection: str | None = None
+        if agent_type:
+            expert_collection = f"subagent.{agent_type}"
+            expert_focus = _focus_text(get_memory, expert_collection)
+
         try:
             record_injection(_STATS_PATH, GLOBAL_COLLECTION, injected=global_focus is not None)
         except Exception:
@@ -103,6 +125,13 @@ def main():
             parts.append(f"[{ctx.scope_name} focus]\n{_truncate(repo_focus, _FOCUS_PREVIEW_CHARS)}")
         if global_focus:
             parts.append(f"[global focus]\n{_truncate(global_focus, _FOCUS_PREVIEW_CHARS)}")
+        if expert_focus:
+            parts.append(f"[{agent_type} expertise]\n{_truncate(expert_focus, _FOCUS_PREVIEW_CHARS)}")
+        if expert_collection:
+            parts.append(
+                f'Expert collection: "subagent.{agent_type}". '
+                f'Store cross-project learnings there with collection="subagent.{agent_type}".'
+            )
         if ctx.has_claude_md:
             parts.append(
                 f'Active collection: "{ctx.collection}". '
