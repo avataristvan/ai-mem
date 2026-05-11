@@ -79,7 +79,7 @@ Entries can be linked with directional typed edges (`contradicts`, `fixes`, `cau
 
 **Storage**: edges are stored as a JSON-encoded string in the `edges` metadata field of the **source** entry. ChromaDB only accepts scalar metadata values, so the list is `json.dumps`/`json.loads` as a string. `_parse_edges()` in `chroma_repository.py` always returns `[]` on parse error (silent).
 
-**Retrieval**: `QueryMemoryUseCase._append_linked()` runs after the primary ranked results are assembled. It follows all outgoing edges of each result entry (1-hop only, no recursion), fetches the target via `get_by_ids`, and appends any target not already in the result set. Budget: `_EDGE_BUDGET = 2` linked entries per query total. Appended entries have `via_edge` and `via_source` in their metadata. Edge traversal is wrapped in a bare `except Exception: pass` so it cannot crash a query.
+**Retrieval**: `QueryMemoryUseCase._append_linked()` runs after the primary ranked results are assembled. It follows all outgoing edges of each result entry (1-hop only, no recursion), fetches the target via `get_by_ids`, and appends any target not already in the result set. Budget: 2 linked entries per query total. Appended entries have `via_edge` and `via_source` in their metadata. Edge traversal is wrapped in a bare `except Exception: pass` so it cannot crash a query.
 
 **Protocol**: `MemoryRepository` has two new methods — `add_edge(collection, source_id, edge)` and `get_edges(collection, entry_id) → list[MemoryEdge]`. Both `ChromaMemoryRepository` and `BM25MemoryRepository` implement them (`BM25` delegates to inner).
 

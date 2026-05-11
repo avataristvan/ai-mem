@@ -1,6 +1,6 @@
 # Hook System
 
-ai-mem registers four Claude Code lifecycle hooks. All hooks are silent on failure (wrapped in try/except) so they never interrupt the session.
+ai-mem registers five Claude Code lifecycle hooks. All hooks are silent on failure (wrapped in try/except) so they never interrupt the session.
 
 ## SessionStart (`hook.py`)
 
@@ -58,20 +58,45 @@ Checks global scope and repo scope independently; either qualifying triggers inj
 
 ## PreToolUse (`pretool_hook.py`)
 
-Fires before each tool call. Injects brief relevant context from memory to inform tool decisions.
+Fires before each Write or Edit tool call. Injects relevant past experiences from memory to inform the upcoming file change.
+
+**What it does:**
+1. Extracts `file_path` from the tool input
+2. Queries top-2 results from global + repo collections using `"<ToolName> <filename> <path>"` as the query
+3. Prints `hookSpecificOutput` JSON with `PreToolUse` event and formatted results
+
+**Constants:** `TOP_K = 2`, `MAX_CHARS_PER_HIT = 500`
+
+Does not wrap the repo with BM25 — PreToolUse needs low latency, not high-precision retrieval.
+
+## PostToolUse (`posttool_hook.py`)
+
+Fires after each Write or Edit tool call. Records a passive training signal for the ranker — no output to Claude.
+
+**What it does:**
+1. Extracts `file_path` from the tool input
+2. Queries global + repo collections with `"<filename> <path>"` as the query
+3. `QueryMemoryUseCase` internally calls `TrackAccessUseCase`, setting `last_accessed_at = now` on matched entries
+4. Calls `train_step()` — matched entries get labeled positive in the 7-day access window
+
+**Why it matters:** Every file edit is implicit evidence that the matched memory entries were relevant. This feeds the ranker without any manual `mem_train` calls.
+
+Does not wrap the repo with BM25 — the hook only needs semantic proximity, not high-precision ranking.
 
 ---
 
 ## Hook Registration
 
-Hooks are registered in `~/.claude/settings.json` by `install.py`. Each hook has a timeout (SessionStart: 10s, Stop: 10s, UserPromptSubmit: 8s).
+Hooks are registered in `~/.claude/settings.json` by `install.py`. Each hook has a timeout (SessionStart: 10s, Stop: 10s, UserPromptSubmit: 8s, PreToolUse: 10s, PostToolUse: 10s).
 
 ```json
 {
   "hooks": {
     "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "python3 -m ai_mem.hook", "timeout": 10000}]}],
     "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "python3 -m ai_mem.stop_hook", "timeout": 10000}]}],
-    "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "python3 -m ai_mem.userprompt_hook", "timeout": 8000}]}]
+    "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "python3 -m ai_mem.userprompt_hook", "timeout": 8000}]}],
+    "PreToolUse": [{"matcher": "Write|Edit", "hooks": [{"type": "command", "command": "python3 -m ai_mem.pretool_hook", "timeout": 10000}]}],
+    "PostToolUse": [{"matcher": "Write|Edit", "hooks": [{"type": "command", "command": "python3 -m ai_mem.posttool_hook", "timeout": 10000}]}]
   }
 }
 ```

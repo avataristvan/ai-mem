@@ -33,19 +33,38 @@ python -m pytest tests/test_session_stats.py -v  # single file
 
 Test fixtures are in `tests/conftest.py`. Infrastructure tests use a real ChromaDB instance in a temp directory.
 
-## Test Counts (as of 2026-04-29)
+## Test Counts (as of 2026-05-11)
 
-- Total: 76 tests, all green
-- Breakdown by module: memory_index (15), repo_seeder (part of 76), session_stats, userprompt_hook
+- Total: 188 tests, all green
+- New modules: posttool_hook (15), edges application (11), edges infra (6)
+
+## Working with Typed Edges
+
+Link two entries with a typed causal edge:
+```
+mem_link(source_id="abc", target_id="xyz", edge_type="contradicts", collection="repo.my-project")
+```
+
+Available edge types: `contradicts`, `fixes`, `causes`, `related`.
+
+Query edges for an entry:
+```
+mem_edges(entry_id="abc", collection="repo.my-project")
+```
+
+During `mem_query`, matched entries automatically surface their linked targets (1-hop, budget: 2 entries). Appended entries have `via_edge` and `via_source` in their metadata.
+
+**Primary use case:** link `type=anti-pattern` entries to the `type=pattern` they contradict. When the pattern is retrieved, the anti-pattern is surfaced alongside it.
 
 ## Conventions
 
 - All timestamps stored as Unix float in ChromaDB metadata: `created_at`, `expires_at`, `last_accessed_at`, `access_count`
 - `mem_delete` with no `ids` returns `-1` (signals full collection drop, not count)
-- `_FETCH_K = 20` in `QueryMemoryUseCase` — hardcoded over-fetch before re-ranking
+- `_FETCH_K = 50` in `QueryMemoryUseCase` — hardcoded over-fetch before re-ranking
 - `RankingFeatures` is frozen: all derived values computed in `as_vector()`, raw fields are immutable
 - `RankerScope` validates its own invariants in `__post_init__`
 - `NullRanker` is the zero-dependency fallback — must not import torch
+- Edges are stored as JSON-string in ChromaDB metadata (`edges` field). `_parse_edges()` in `chroma_repository.py` always returns `[]` on parse error.
 
 ## Configuration
 
@@ -70,4 +89,6 @@ python3 -m ai_mem.server          # MCP server (stdio)
 python3 -m ai_mem.hook            # SessionStart hook
 python3 -m ai_mem.stop_hook       # Stop hook
 python3 -m ai_mem.userprompt_hook # UserPromptSubmit hook
+python3 -m ai_mem.pretool_hook    # PreToolUse hook (pipe JSON payload on stdin)
+python3 -m ai_mem.posttool_hook   # PostToolUse hook (pipe JSON payload on stdin)
 ```
