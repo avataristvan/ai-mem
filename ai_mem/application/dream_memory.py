@@ -1,6 +1,7 @@
 """DreamMemoryUseCase — consolidate memories via Claude models."""
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from datetime import datetime
@@ -19,6 +20,20 @@ MODELS = {
 }
 
 MODES = ("single-haiku", "single-sonnet", "hier", "team")
+
+_TYPE_RULES = """\
+TYPE RULES — apply these strictly:
+- "pattern": a reusable rule or best practice. Canonical format: Rule: / When: / Why:
+- "anti-pattern": a documented failure mode. Canonical format: Tried: / Failed because: / Instead:
+- "feedback", "project", "reference", "user": descriptive entries — no fixed format.
+
+Consolidation constraints:
+- NEVER propose MERGE between a "pattern" and an "anti-pattern". They contradict by design. \
+If they share an edge (shown in metadata), verify the relationship is accurate — do not collapse it.
+- Entries with access_count ≥ 5 are load-bearing (frequently retrieved). \
+Avoid DELETE or MERGE unless clearly redundant.
+- If two entries share an edge, the edge makes both necessary. \
+Verify the relationship before proposing structural changes."""
 
 _COLLECTION_CONTEXT = """\
 COLLECTIONS PRESENT:
@@ -137,8 +152,22 @@ def _format_entries(entries) -> str:
     parts = []
     for e in entries:
         col = e.metadata.get("_collection", "?")
-        meta = {k: v for k, v in e.metadata.items() if k != "_collection"}
-        meta_str = f" [{meta}]" if meta else ""
+        shown: dict[str, object] = {}
+        if t := e.metadata.get("type"):
+            shown["type"] = t
+        if ac := e.metadata.get("access_count"):
+            shown["access_count"] = int(ac)
+        if raw_edges := e.metadata.get("edges"):
+            try:
+                edges = json.loads(raw_edges)
+                if edges:
+                    shown["edges"] = [f"{ed['target_id']}({ed['edge_type']})" for ed in edges]
+            except Exception:
+                pass
+        meta_str = (
+            " [" + ", ".join(f"{k}={v}" for k, v in shown.items()) + "]"
+            if shown else ""
+        )
         parts.append(f"[{e.id}] (collection: {col}){meta_str}\n{e.text}")
     return "\n\n---\n\n".join(parts) if parts else "(empty)"
 
@@ -172,7 +201,13 @@ class DreamMemoryUseCase:
     def __init__(self, repo: MemoryRepository) -> None:
         self._repo = repo
 
-    def execute(self, collection: str | None, mode: str, auto_apply: bool = False) -> str:
+    def execute(
+        self,
+        collection: str | None,
+        mode: str,
+        auto_apply: bool = False,
+        focus_hint: str | None = None,
+    ) -> str:
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
 
@@ -192,7 +227,13 @@ class DreamMemoryUseCase:
         if not all_entries:
             return "No memories found."
 
-        memories = _format_entries(all_entries)
+        preamble_parts = [_TYPE_RULES]
+        if focus_hint:
+            preamble_parts.append(f"FOCUS:\n{focus_hint}")
+        preamble = "\n\n".join(preamble_parts)
+
+        raw_memories = _format_entries(all_entries)
+        memories = preamble + "\n\n---\n\n" + raw_memories
         col_ctx = _collection_context(collections)
         ts = datetime.now().strftime("%Y-%m-%d %H:%M")
 

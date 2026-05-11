@@ -1,9 +1,82 @@
-"""Tests for dream_memory propagation candidate parsing."""
+"""Tests for dream_memory propagation candidate parsing and entry formatting."""
 from __future__ import annotations
 
-import pytest
+import json
 
-from ai_mem.application.dream_memory import _ADD_TARGET_RE, _propagation_candidates
+from ai_mem.application.dream_memory import (
+    _ADD_TARGET_RE,
+    _TYPE_RULES,
+    _format_entries,
+    _propagation_candidates,
+)
+from ai_mem.domain.memory import MemoryEntry
+
+
+def _entry(id: str, text: str, **meta) -> MemoryEntry:
+    meta["_collection"] = meta.pop("collection", "repo.test")
+    return MemoryEntry(id=id, text=text, metadata=meta)
+
+
+# ── _format_entries ───────────────────────────────────────────────────────────
+
+class TestFormatEntries:
+    def test_shows_type_metadata(self):
+        e = _entry("p1", "Rule: X\nWhen: Y\nWhy: Z", type="pattern")
+        out = _format_entries([e])
+        assert "type=pattern" in out
+
+    def test_shows_access_count(self):
+        e = _entry("f1", "some feedback", access_count=7)
+        out = _format_entries([e])
+        assert "access_count=7" in out
+
+    def test_decodes_edges_to_readable_form(self):
+        edges = json.dumps([{"target_id": "p2", "edge_type": "contradicts"}])
+        e = _entry("ap1", "anti-pattern text", type="anti-pattern", edges=edges)
+        out = _format_entries([e])
+        assert "p2(contradicts)" in out
+
+    def test_excludes_raw_timestamps(self):
+        e = _entry("e1", "text", created_at=1234567890.0, last_accessed_at=9999.0)
+        out = _format_entries([e])
+        assert "created_at" not in out
+        assert "last_accessed_at" not in out
+
+    def test_empty_edges_field_not_shown(self):
+        e = _entry("e2", "text", edges=json.dumps([]))
+        out = _format_entries([e])
+        assert "edges" not in out
+
+    def test_malformed_edges_silently_skipped(self):
+        e = _entry("e3", "text", edges="not-json")
+        out = _format_entries([e])
+        assert "edges" not in out
+
+    def test_no_metadata_no_brackets(self):
+        e = _entry("e4", "plain text")
+        out = _format_entries([e])
+        assert "[]" not in out
+        assert "[e4]" in out
+
+    def test_empty_list_returns_empty_marker(self):
+        assert _format_entries([]) == "(empty)"
+
+
+# ── _TYPE_RULES preamble presence ─────────────────────────────────────────────
+
+class TestTypeRules:
+    def test_type_rules_mentions_pattern_format(self):
+        assert "Rule:" in _TYPE_RULES
+        assert "When:" in _TYPE_RULES
+        assert "Why:" in _TYPE_RULES
+
+    def test_type_rules_mentions_anti_pattern_format(self):
+        assert "Tried:" in _TYPE_RULES
+        assert "Failed because:" in _TYPE_RULES
+
+    def test_type_rules_warns_about_merge_constraint(self):
+        assert "MERGE" in _TYPE_RULES
+        assert "anti-pattern" in _TYPE_RULES
 
 
 # ── _ADD_TARGET_RE ────────────────────────────────────────────────────────────

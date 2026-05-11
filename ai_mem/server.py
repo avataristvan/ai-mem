@@ -179,7 +179,9 @@ async def list_tools() -> list[types.Tool]:
                 "'team' (4-turn Haiku↔Sonnet exchange). "
                 "Invoked via the claude CLI — no API key required. "
                 "Returns a structured diff proposal. Set 'auto_apply' to true to automatically "
-                "execute DELETE actions identified by the synthesis."
+                "execute DELETE actions identified by the synthesis. "
+                "Use 'focus_hint' to steer consolidation — e.g. for expert collections: "
+                "'These are cross-project learnings. Flag entries too project-specific to be worth keeping.'"
             ),
             inputSchema={
                 "type": "object",
@@ -195,6 +197,15 @@ async def list_tools() -> list[types.Tool]:
                         "type": "boolean",
                         "default": False,
                         "description": "Automatically delete entries identified as safe to remove",
+                    },
+                    "focus_hint": {
+                        "type": "string",
+                        "description": (
+                            "Optional instruction to steer consolidation. "
+                            "For expert collections: 'These are cross-project learnings from a <role> agent. "
+                            "Flag entries too project-specific to keep cross-project. "
+                            "Prefer DELETE over MERGE for project-specific entries.'"
+                        ),
                     },
                 },
                 "required": [],
@@ -408,7 +419,8 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         mode = arguments.get("mode") or "hier"
         col_arg = arguments.get("collection") or None
         auto_apply = bool(arguments.get("auto_apply", False))
-        result = await asyncio.to_thread(_dream.execute, col_arg, mode, auto_apply)
+        focus_hint = arguments.get("focus_hint") or None
+        result = await asyncio.to_thread(_dream.execute, col_arg, mode, auto_apply, focus_hint)
         return [types.TextContent(type="text", text=result)]
 
     if name == "mem_train":

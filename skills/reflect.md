@@ -60,6 +60,19 @@ mem_add(
 
 The `Tried:` field makes the entry self-retrieving — future queries about the same approach will surface it automatically without any special retrieval logic.
 
+If what was learned is a generalizable rule — not tied to this project — store it as a pattern instead:
+
+```
+mem_add(
+    documents=["Rule: <the rule>\nWhen: <context where it applies>\nWhy: <invariant it enforces>"],
+    collection=<active>,
+    type="pattern",
+    ids=["pattern_<slug>"],
+)
+```
+
+The `Rule:` structure makes the entry scannable during dream consolidation and prevents it from being incorrectly merged with the anti-pattern it replaces.
+
 Skip if the user has nothing to add.
 
 ---
