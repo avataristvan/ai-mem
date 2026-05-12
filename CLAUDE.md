@@ -74,6 +74,9 @@ Capability-centric DDD — three layers, no upward imports.
 - PostToolUse hook does NOT wrap the inner repo with `BM25MemoryRepository` — BM25 adds latency and the hook only needs semantic proximity for label propagation, not high-precision retrieval.
 - `mem_dream` accepts an optional `focus_hint: str` to steer consolidation. For expert collections (`subagent.*`), pass: `"Cross-project learnings from a <role> agent. Flag entries too project-specific to keep. Prefer DELETE over MERGE for project-specific entries."` — this distinguishes transferable patterns from project-specific facts.
 - Dream preamble pattern: `_TYPE_RULES` + `focus_hint` are prepended to the `memories` string before each Claude call, not injected into prompt template strings. Add context to dreams this way — not by modifying the prompt constants.
+- `TrainingExample.target_future_access` is the label field (0.0, 1.0, or None). There is NO `.label` attribute — using `.label` silently returns 0 labeled examples (AttributeError caught by the surrounding try/except). Always use `.target_future_access` when counting labeled examples.
+- `_ranker_signal(collection)` in `hook.py` — reads `RankerStorage` directly (collection name as scope key) and returns a one-line calibration status appended to the SessionStart output. Returns None when no examples exist (new collection, no noise). `_RANKER_MIN_LABELED = 10` mirrors `MIN_LABELED_EXAMPLES` in `userprompt_hook.py`.
+- Anti-pattern injection in `userprompt_hook.py` bypasses the ranker gate (`MIN_LABELED_EXAMPLES` / `MIN_AVG_SCORE`) — queries `type_filter="anti-pattern"` independently with `ANTIPATTERN_MIN_SCORE = 0.4` (high recall: missing a warning is worse than a false alarm). Output block `[ai-mem warnings]` with `⚠` prefix appears before `[ai-mem]` context.
 
 ## Typed Causal Edges
 

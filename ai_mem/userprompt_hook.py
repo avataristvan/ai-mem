@@ -119,7 +119,7 @@ def _antipattern_hits(query_uc, collection: str, query: str):
 def _labeled_count(storage, registry, collection: str) -> int:
     try:
         scope_key = registry.scope_key(collection)
-        return sum(1 for e in storage.load_buffer(scope_key) if e.label is not None)
+        return sum(1 for e in storage.load_buffer(scope_key) if e.target_future_access is not None)
     except Exception:
         return 0
 

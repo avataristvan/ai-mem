@@ -27,7 +27,7 @@ def _make_result(score: float, text: str = "some memory text", entry_id: str | N
 
 def _make_example(labeled: bool) -> MagicMock:
     ex = MagicMock(spec=TrainingExample)
-    ex.label = 1.0 if labeled else None
+    ex.target_future_access = 1.0 if labeled else None
     return ex
 
 

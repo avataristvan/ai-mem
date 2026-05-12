@@ -42,12 +42,13 @@ def _run_main(
     should_inject: bool = True,
     focus_map: dict[str, str | None] | None = None,
     repo_collection: str = "workspace",
+    ranker_signal: str | None = None,
 ) -> str:
     """Run hook.main() with mocked dependencies; return captured stdout.
 
     All imports in hook.py are now module-level, so patch.object(hook, ...) works.
-    _focus_text is patched directly so we can control per-collection focus text
-    without standing up ChromaDB.
+    _focus_text and _ranker_signal are patched directly to control output without
+    standing up ChromaDB or RankerStorage.
     """
     focus_map = focus_map or {}
 
@@ -63,6 +64,7 @@ def _run_main(
         patch.object(sys, "stdin", stdin_stream),
         patch.object(hook, "DB_PATH", tmp_path),
         patch.object(hook, "_focus_text", side_effect=fake_focus_text),
+        patch.object(hook, "_ranker_signal", return_value=ranker_signal),
         patch.object(hook, "_try_seed"),
         patch.object(hook, "detect_for_session_start", return_value=agent_ctx),
         patch.object(hook, "write_to_env_file"),
@@ -171,3 +173,53 @@ def test_should_inject_false_produces_no_output(tmp_path: Path) -> None:
     )
 
     assert out == ""
+
+
+# ---------------------------------------------------------------------------
+# 6. Ranker-Confidence-Signal — cold start
+# ---------------------------------------------------------------------------
+
+def test_ranker_cold_signal_appears_in_output(tmp_path: Path) -> None:
+    cold_signal = "Ranker (repo.test): 3 labeled — cold start (< 10, context hook inactive — query mem manually)"
+    out = _run_main(
+        tmp_path,
+        focus_map={"global": "some context"},
+        ranker_signal=cold_signal,
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert cold_signal in ctx
+
+
+# ---------------------------------------------------------------------------
+# 7. Ranker-Confidence-Signal — calibrated
+# ---------------------------------------------------------------------------
+
+def test_ranker_calibrated_signal_appears_in_output(tmp_path: Path) -> None:
+    calibrated = "Ranker (repo.test): 15 labeled — calibrated, context hook active"
+    out = _run_main(
+        tmp_path,
+        focus_map={"global": "some context"},
+        ranker_signal=calibrated,
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert calibrated in ctx
+
+
+# ---------------------------------------------------------------------------
+# 8. Ranker-Confidence-Signal — None produces no signal line
+# ---------------------------------------------------------------------------
+
+def test_no_ranker_signal_when_none_returned(tmp_path: Path) -> None:
+    out = _run_main(
+        tmp_path,
+        focus_map={"global": "some context"},
+        ranker_signal=None,
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "Ranker" not in ctx

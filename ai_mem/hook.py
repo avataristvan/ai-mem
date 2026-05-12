@@ -44,6 +44,28 @@ def _focus_text(get_memory, collection: str) -> str | None:
         return None
 
 
+_RANKER_MIN_LABELED = 10  # mirrors MIN_LABELED_EXAMPLES in userprompt_hook.py
+
+
+def _ranker_signal(collection: str) -> str | None:
+    """Return a one-line calibration status for the active collection, or None."""
+    try:
+        from ai_mem.infrastructure.ranker_storage import RankerStorage
+        storage = RankerStorage(DB_PATH / "rankers")
+        examples = storage.load_buffer(collection)
+        if not examples:
+            return None
+        n_labeled = sum(1 for e in examples if e.target_future_access is not None)
+        if n_labeled >= _RANKER_MIN_LABELED:
+            return f"Ranker ({collection}): {n_labeled} labeled — calibrated, context hook active"
+        return (
+            f"Ranker ({collection}): {n_labeled} labeled — cold start "
+            f"(< {_RANKER_MIN_LABELED}, context hook inactive — query mem manually)"
+        )
+    except Exception:
+        return None
+
+
 def _try_seed(ctx, repo, stats_path: Path) -> None:
     try:
         from ai_mem.application.add_memory import AddMemoryUseCase
@@ -139,6 +161,10 @@ def main():
             )
             if not repo_focus:
                 parts.append("Run /mem-init to set the initial focus for this scope.")
+
+        signal = _ranker_signal(ctx.collection)
+        if signal:
+            parts.append(signal)
 
         if not parts:
             return
