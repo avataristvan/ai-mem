@@ -53,6 +53,7 @@ def _run_main(
     stdin_stream: StringIO,
     global_results=None,
     repo_results=None,
+    antipattern_results=None,
     storage=None,
     registry=None,
     repo_collection: str | None = None,
@@ -60,12 +61,15 @@ def _run_main(
     """Run hook.main() with mocked dependencies; return captured stdout."""
     global_results = global_results or []
     repo_results = repo_results or []
+    antipattern_results = antipattern_results or []
     storage = storage or _make_storage(0)
     registry = registry or _make_registry()
 
     query_uc = MagicMock()
 
-    def fake_hits(collection, query, n_results):
+    def fake_hits(collection, query, n_results, type_filter=None, max_age_days=None):
+        if type_filter == "anti-pattern":
+            return antipattern_results
         if collection == "global":
             return global_results
         return repo_results
@@ -285,6 +289,103 @@ def test_expired_session_file_is_ignored(tmp_path: Path) -> None:
     # Both entries must appear because the old session file is expired.
     assert "memory A" in ctx
     assert "memory B" in ctx
+
+
+# ---------------------------------------------------------------------------
+# 11. Anti-pattern warnings fire without ranker qualification
+# ---------------------------------------------------------------------------
+
+def test_antipattern_fires_without_ranker_qualification(tmp_path: Path) -> None:
+    storage = _make_storage(labeled_count=0)  # far below MIN_LABELED_EXAMPLES
+    registry = _make_registry("repo.my-project")
+    ap = _make_result(0.85, "Tried: X\nFailed because: Y\nInstead: Z", entry_id="ap-1")
+
+    out = _run_main(
+        tmp_path,
+        _stdin_json(),
+        antipattern_results=[ap],
+        storage=storage,
+        registry=registry,
+        repo_collection="repo.my-project",
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "[ai-mem warnings]" in ctx
+    assert "⚠" in ctx
+    assert "Tried: X" in ctx
+
+
+# ---------------------------------------------------------------------------
+# 12. Anti-pattern warnings appear before main context block
+# ---------------------------------------------------------------------------
+
+def test_antipattern_block_precedes_context_block(tmp_path: Path) -> None:
+    storage = _make_storage(labeled_count=15)
+    registry = _make_registry("repo.my-project")
+    ap = _make_result(0.85, "Tried: A\nFailed because: B\nInstead: C", entry_id="ap-1")
+    regular = _make_result(0.9, "regular memory", entry_id="r-1")
+
+    out = _run_main(
+        tmp_path,
+        _stdin_json(),
+        repo_results=[regular],
+        antipattern_results=[ap],
+        storage=storage,
+        registry=registry,
+        repo_collection="repo.my-project",
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert ctx.index("[ai-mem warnings]") < ctx.index("[ai-mem]")
+
+
+# ---------------------------------------------------------------------------
+# 13. Anti-patterns below ANTIPATTERN_MIN_SCORE are filtered
+# ---------------------------------------------------------------------------
+
+def test_antipattern_below_min_score_not_injected(tmp_path: Path) -> None:
+    storage = _make_storage(labeled_count=0)
+    registry = _make_registry("repo.my-project")
+    ap = _make_result(0.2, "Tried: low score\nFailed because: X\nInstead: Y", entry_id="ap-low")
+
+    out = _run_main(
+        tmp_path,
+        _stdin_json(),
+        antipattern_results=[ap],
+        storage=storage,
+        registry=registry,
+        repo_collection="repo.my-project",
+    )
+
+    assert out == ""
+
+
+# ---------------------------------------------------------------------------
+# 14. Anti-patterns deduplicated against already-injected session IDs
+# ---------------------------------------------------------------------------
+
+def test_antipattern_dedup_against_session_injected(tmp_path: Path) -> None:
+    import time
+
+    storage = _make_storage(labeled_count=0)
+    registry = _make_registry("repo.my-project")
+    ap = _make_result(0.85, "Tried: seen before\nFailed because: X\nInstead: Y", entry_id="ap-seen")
+
+    session_file = tmp_path / "session_injected.json"
+    session_file.write_text(json.dumps({"session_ts": time.time(), "ids": ["ap-seen"]}))
+
+    out = _run_main(
+        tmp_path,
+        _stdin_json(),
+        antipattern_results=[ap],
+        storage=storage,
+        registry=registry,
+        repo_collection="repo.my-project",
+    )
+
+    assert out == ""
 
 
 # ---------------------------------------------------------------------------

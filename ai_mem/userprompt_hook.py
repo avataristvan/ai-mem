@@ -15,6 +15,9 @@ MAX_TOTAL_CHARS = 1500
 MIN_LABELED_EXAMPLES = 10
 MIN_AVG_SCORE = 0.55
 SESSION_TTL_HOURS = 4
+ANTIPATTERN_TOP_K = 2
+MAX_CHARS_PER_ANTIPATTERN = 200
+ANTIPATTERN_MIN_SCORE = 0.4
 
 
 def _load_session_injected(db_path: Path) -> set[str]:
@@ -100,6 +103,19 @@ def _hits(query_uc, collection: str, query: str):
         return []
 
 
+def _antipattern_hits(query_uc, collection: str, query: str):
+    try:
+        results = query_uc.execute(
+            collection=collection,
+            query=query,
+            n_results=ANTIPATTERN_TOP_K,
+            type_filter="anti-pattern",
+        )
+        return [r for r in results if (r.score or 0.0) >= ANTIPATTERN_MIN_SCORE]
+    except Exception:
+        return []
+
+
 def _labeled_count(storage, registry, collection: str) -> int:
     try:
         scope_key = registry.scope_key(collection)
@@ -151,16 +167,18 @@ def main():
     repo_results = []
     repo_collection = None
     repo_ok = False
+    antipattern_results = []
     try:
         ctx = detect_repo_context()
         if ctx.collection not in (GLOBAL_COLLECTION, WORKSPACE_COLLECTION):
             repo_collection = ctx.collection
             repo_results = _hits(query_uc, repo_collection, query)
             repo_ok = _qualifies(storage, registry, repo_results, repo_collection)
+            antipattern_results = _antipattern_hits(query_uc, repo_collection, query)
     except Exception:
         pass
 
-    if not global_ok and not repo_ok:
+    if not global_ok and not repo_ok and not antipattern_results:
         return
 
     collected: list[tuple[str, object]] = []
@@ -175,12 +193,13 @@ def main():
     except Exception:
         pass
 
-    if not collected:
+    if not collected and not antipattern_results:
         return
 
     # Per-session dedup: skip entries already injected in this session.
     already_injected = _load_session_injected(DB_PATH)
     collected = [(coll, r) for coll, r in collected if getattr(r, "id", None) not in already_injected or getattr(r, "id", None) is None]
+    antipattern_results = [r for r in antipattern_results if getattr(r, "id", None) not in already_injected]
 
     # Combined budget cap: include entries until MAX_TOTAL_CHARS is reached.
     budget_collected: list[tuple[str, object]] = []
@@ -193,20 +212,36 @@ def main():
         chars_used += entry_len
     collected = budget_collected
 
-    if not collected:
+    if not collected and not antipattern_results:
         return
 
-    lines = ["[ai-mem] Relevant context for your prompt:"]
+    lines: list[str] = []
     injected_ids: set[str] = set()
-    for coll, r in collected:
-        text = r.text[:MAX_CHARS_PER_HIT]
-        if len(r.text) > MAX_CHARS_PER_HIT:
-            text += "..."
-        score = f"{r.score:.2f}" if r.score is not None else "n/a"
-        lines.append(f"- [{coll} score={score}] {text}")
-        entry_id = getattr(r, "id", None)
-        if entry_id is not None:
-            injected_ids.add(entry_id)
+
+    if antipattern_results:
+        lines.append("[ai-mem warnings]")
+        for r in antipattern_results:
+            text = r.text[:MAX_CHARS_PER_ANTIPATTERN]
+            if len(r.text) > MAX_CHARS_PER_ANTIPATTERN:
+                text += "..."
+            lines.append(f"⚠ {text}")
+            entry_id = getattr(r, "id", None)
+            if entry_id is not None:
+                injected_ids.add(entry_id)
+
+    if collected:
+        if lines:
+            lines.append("")
+        lines.append("[ai-mem] Relevant context for your prompt:")
+        for coll, r in collected:
+            text = r.text[:MAX_CHARS_PER_HIT]
+            if len(r.text) > MAX_CHARS_PER_HIT:
+                text += "..."
+            score = f"{r.score:.2f}" if r.score is not None else "n/a"
+            lines.append(f"- [{coll} score={score}] {text}")
+            entry_id = getattr(r, "id", None)
+            if entry_id is not None:
+                injected_ids.add(entry_id)
 
     _save_session_injected(DB_PATH, injected_ids)
 
