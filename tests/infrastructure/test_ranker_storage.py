@@ -79,3 +79,28 @@ def test_weights_path_and_buffer_path(storage: RankerStorage, tmp_path: Path):
     base = tmp_path / "rankers"
     assert storage.weights_path("mycol") == base / "mycol.pt"
     assert storage.buffer_path("mycol") == base / "mycol.examples.jsonl"
+
+
+# ---------------------------------------------------------------------------
+# labeled_count
+# ---------------------------------------------------------------------------
+
+def test_labeled_count_empty_buffer_returns_zero(storage: RankerStorage):
+    assert storage.labeled_count("nonexistent") == 0
+
+
+def test_labeled_count_mixed_returns_only_labeled(storage: RankerStorage):
+    examples = [
+        _example("a", target=1.0),
+        _example("b", target=None),
+        _example("c", target=0.0),
+        _example("d", target=None),
+    ]
+    storage.append_examples("col", examples)
+    assert storage.labeled_count("col") == 2
+
+
+def test_labeled_count_all_labeled(storage: RankerStorage):
+    examples = [_example(str(i), target=1.0) for i in range(5)]
+    storage.append_examples("col", examples)
+    assert storage.labeled_count("col") == 5

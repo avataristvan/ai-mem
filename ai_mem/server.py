@@ -293,6 +293,8 @@ async def list_tools() -> list[types.Tool]:
 
 _PATTERN_LINK_THRESHOLD = 0.4
 _PATTERN_LINK_MAX = 2
+CONTRADICTION_THRESHOLD = 0.75
+_CONTRADICTION_MAX = 3
 
 
 def _suggest_pattern_links(collection: str, documents: list[str], stored_ids: list[str]) -> str:
@@ -331,6 +333,31 @@ def _suggest_pattern_links(collection: str, documents: list[str], stored_ids: li
         return ""
 
 
+def _detect_contradictions(collection: str, type_tag: str, documents: list[str]) -> list[dict]:
+    """Query the opposite type to find possible contradictions above the threshold.
+
+    Returns a list of {id, score, preview} dicts for hits at or above
+    CONTRADICTION_THRESHOLD. Returns an empty list when the query fails.
+    """
+    opposite = "anti-pattern" if type_tag == "pattern" else "pattern"
+    hits: list[dict] = []
+    try:
+        for doc in documents:
+            results = _query.execute(
+                collection=collection,
+                query=doc,
+                n_results=_CONTRADICTION_MAX,
+                type_filter=opposite,
+            )
+            seen_ids = {h["id"] for h in hits}
+            for r in results:
+                if (r.score or 0.0) >= CONTRADICTION_THRESHOLD and r.id not in seen_ids:
+                    hits.append({"id": r.id, "score": round(r.score, 2), "preview": r.text[:120]})
+    except Exception:
+        pass
+    return hits
+
+
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     collection = arguments.get("collection") or DEFAULT_COLLECTION
@@ -361,6 +388,18 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             )
             if suggestion:
                 base_text = f"{base_text}\n\n{suggestion}"
+
+        if type_tag in ("pattern", "anti-pattern"):
+            contradictions = _detect_contradictions(
+                collection=collection,
+                type_tag=type_tag,
+                documents=arguments["documents"],
+            )
+            if contradictions:
+                base_text = (
+                    f"{base_text}\n\npossible_contradictions: "
+                    + json.dumps(contradictions, ensure_ascii=False)
+                )
 
         return [types.TextContent(type="text", text=base_text)]
 

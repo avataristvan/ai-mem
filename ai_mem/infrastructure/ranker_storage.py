@@ -75,6 +75,9 @@ class RankerStorage:
             for ex in kept:
                 f.write(json.dumps(_serialize(ex)) + "\n")
 
+    def labeled_count(self, scope: str) -> int:
+        return sum(1 for e in self.load_buffer(scope) if e.target_future_access is not None)
+
     def clear_buffer(self, scope: str) -> None:
         path = self.buffer_path(scope)
         if path.exists():

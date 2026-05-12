@@ -35,6 +35,7 @@ def _make_storage(labeled_count: int) -> MagicMock:
     storage = MagicMock()
     examples = [_make_example(i < labeled_count) for i in range(max(labeled_count, 0))]
     storage.load_buffer.return_value = examples
+    storage.labeled_count.return_value = labeled_count
     return storage
 
 
@@ -194,6 +195,12 @@ def test_queries_both_global_and_repo_collection(tmp_path: Path) -> None:
             return global_storage.load_buffer(scope_key)
         return repo_storage.load_buffer(scope_key)
     storage.load_buffer.side_effect = fake_load
+
+    def fake_labeled_count(scope_key):
+        if scope_key == "global":
+            return global_storage.labeled_count(scope_key)
+        return repo_storage.labeled_count(scope_key)
+    storage.labeled_count.side_effect = fake_labeled_count
 
     registry = MagicMock()
     def fake_scope_key(collection):

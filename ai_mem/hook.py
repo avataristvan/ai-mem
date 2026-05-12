@@ -13,6 +13,7 @@ DB_PATH = Path(os.environ.get("AI_MEM_PATH", Path.home() / ".local" / "share" / 
 try:
     from ai_mem.agent_context import detect_for_session_start, write_to_env_file
     from ai_mem.application.get_memory import GetMemoryUseCase
+    from ai_mem.application.list_collections import ListCollectionsUseCase
     from ai_mem.infrastructure.chroma_repository import ChromaMemoryRepository
     from ai_mem.repo_context import GLOBAL_COLLECTION, WORKSPACE_COLLECTION, detect_repo_context
     from ai_mem.session_stats import record_injection
@@ -20,6 +21,7 @@ except ImportError:
     detect_for_session_start = None  # type: ignore[assignment]
     write_to_env_file = None  # type: ignore[assignment]
     GetMemoryUseCase = None  # type: ignore[assignment]
+    ListCollectionsUseCase = None  # type: ignore[assignment]
     ChromaMemoryRepository = None  # type: ignore[assignment]
     GLOBAL_COLLECTION = "global"
     WORKSPACE_COLLECTION = "workspace"
@@ -29,11 +31,38 @@ except ImportError:
 FOCUS_ID = "current_focus"
 _STATS_PATH = DB_PATH / "session_stats.json"
 _SESSION_START_FILE = DB_PATH / "session_start.txt"
+_PREV_SESSION_FILE = DB_PATH / "prev_session.json"
+_PREV_SESSION_MAX_AGE_DAYS = 7
 _FOCUS_PREVIEW_CHARS = 150
 
 
 def _truncate(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit].rstrip() + "…"
+
+
+def _session_delta(db_path: Path, current_count: int) -> int | None:
+    """Return entry delta since the last session, or None if no valid prior record exists."""
+    prev_file = db_path / "prev_session.json"
+    try:
+        data = json.loads(prev_file.read_text(encoding="utf-8"))
+        age_days = (time.time() - data["ts"]) / 86400
+        if age_days > _PREV_SESSION_MAX_AGE_DAYS:
+            return None
+        delta = current_count - int(data["count"])
+        return delta if delta > 0 else None
+    except Exception:
+        return None
+
+
+def _write_prev_session(db_path: Path, current_count: int) -> None:
+    prev_file = db_path / "prev_session.json"
+    try:
+        prev_file.write_text(
+            json.dumps({"ts": time.time(), "count": current_count}),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
 
 
 def _focus_text(get_memory, collection: str) -> str | None:
@@ -52,10 +81,9 @@ def _ranker_signal(collection: str) -> str | None:
     try:
         from ai_mem.infrastructure.ranker_storage import RankerStorage
         storage = RankerStorage(DB_PATH / "rankers")
-        examples = storage.load_buffer(collection)
-        if not examples:
+        if not storage.load_buffer(collection):
             return None
-        n_labeled = sum(1 for e in examples if e.target_future_access is not None)
+        n_labeled = storage.labeled_count(collection)
         if n_labeled >= _RANKER_MIN_LABELED:
             return f"Ranker ({collection}): {n_labeled} labeled — calibrated, context hook active"
         return (
@@ -126,6 +154,9 @@ def main():
         repo = ChromaMemoryRepository(DB_PATH)
         get_memory = GetMemoryUseCase(repo)
 
+        collections = ListCollectionsUseCase(repo).execute()
+        current_count = sum(c.count for c in collections)
+
         repo_focus = _focus_text(get_memory, ctx.collection) if ctx.collection != WORKSPACE_COLLECTION else None
         global_focus = _focus_text(get_memory, GLOBAL_COLLECTION)
 
@@ -162,9 +193,16 @@ def main():
             if not repo_focus:
                 parts.append("Run /mem-init to set the initial focus for this scope.")
 
+        delta = _session_delta(DB_PATH, current_count)
+        if delta is not None:
+            label = "entry" if delta == 1 else "entries"
+            parts.append(f"Since last session: {delta} new {label} added")
+
         signal = _ranker_signal(ctx.collection)
         if signal:
             parts.append(signal)
+
+        _write_prev_session(DB_PATH, current_count)
 
         if not parts:
             return

@@ -1,13 +1,14 @@
-"""Tests for the mem_add anti-pattern → pattern link suggestion in server.py."""
+"""Tests for the mem_add anti-pattern → pattern link suggestion and contradiction detection in server.py."""
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import ai_mem.server as server_module
-from ai_mem.server import _suggest_pattern_links
+from ai_mem.server import _suggest_pattern_links, _detect_contradictions
 
 
 # ---------------------------------------------------------------------------
@@ -146,3 +147,113 @@ def test_call_tool_mem_add_antipattern_appends_suggestion():
     assert "💡 Related patterns found" in text
     assert 'source_id="ap_x"' in text
     assert 'target_id="pat_x"' in text
+
+
+# ---------------------------------------------------------------------------
+# _detect_contradictions unit tests
+# ---------------------------------------------------------------------------
+
+def test_detect_contradictions_pattern_queries_antipattern_opposite():
+    """Adding a pattern queries anti-pattern entries for contradictions."""
+    ap_hit = _make_query_result("ap1", score=0.82, text="Tried: always caching\nFailed because: stale data")
+
+    mock_query = MagicMock()
+    mock_query.execute.return_value = [ap_hit]
+
+    with patch.object(server_module, "_query", mock_query):
+        hits = _detect_contradictions(
+            collection="global",
+            type_tag="pattern",
+            documents=["Always cache query results for performance"],
+        )
+
+    assert len(hits) == 1
+    assert hits[0]["id"] == "ap1"
+    assert hits[0]["score"] == 0.82
+    assert "Tried: always caching" in hits[0]["preview"]
+    # The query must have been called with type_filter="anti-pattern"
+    call_kwargs = mock_query.execute.call_args
+    assert call_kwargs.kwargs.get("type_filter") == "anti-pattern" or (
+        len(call_kwargs.args) > 3 and call_kwargs.args[3] == "anti-pattern"
+    )
+
+
+def test_detect_contradictions_antipattern_queries_pattern_opposite():
+    """Adding an anti-pattern queries pattern entries for contradictions."""
+    pat_hit = _make_query_result("pat1", score=0.90, text="Use caching to improve read performance")
+
+    mock_query = MagicMock()
+    mock_query.execute.return_value = [pat_hit]
+
+    with patch.object(server_module, "_query", mock_query):
+        hits = _detect_contradictions(
+            collection="global",
+            type_tag="anti-pattern",
+            documents=["Tried: caching everything\nFailed because: cache invalidation bugs"],
+        )
+
+    assert len(hits) == 1
+    assert hits[0]["id"] == "pat1"
+    call_kwargs = mock_query.execute.call_args
+    assert call_kwargs.kwargs.get("type_filter") == "pattern" or (
+        len(call_kwargs.args) > 3 and call_kwargs.args[3] == "pattern"
+    )
+
+
+def test_detect_contradictions_below_threshold_returns_empty():
+    low_hit = _make_query_result("ap2", score=0.60, text="Unrelated anti-pattern")
+
+    mock_query = MagicMock()
+    mock_query.execute.return_value = [low_hit]
+
+    with patch.object(server_module, "_query", mock_query):
+        hits = _detect_contradictions(
+            collection="global",
+            type_tag="pattern",
+            documents=["Some pattern text"],
+        )
+
+    assert hits == []
+
+
+def test_detect_contradictions_not_triggered_for_other_types():
+    """Contradiction detection only fires for pattern/anti-pattern types."""
+    mock_add = MagicMock()
+    mock_add.execute.return_value = 1
+    mock_query = MagicMock()
+    mock_query.execute.return_value = []
+
+    async def _run():
+        return await server_module.call_tool("mem_add", {
+            "documents": ["Some feedback note"],
+            "ids": ["fb1"],
+            "collection": "workspace",
+            "type": "feedback",
+        })
+
+    with patch.object(server_module, "_add", mock_add), \
+         patch.object(server_module, "_query", mock_query):
+        result = asyncio.run(_run())
+
+    # _query should not have been called for a non-pattern type
+    mock_query.execute.assert_not_called()
+    text = result[0].text
+    assert "possible_contradictions" not in text
+
+
+def test_detect_contradictions_at_threshold_boundary():
+    """Score exactly at CONTRADICTION_THRESHOLD is included."""
+    hit = _make_query_result("ap3", score=0.75, text="Boundary case anti-pattern")
+
+    mock_query = MagicMock()
+    mock_query.execute.return_value = [hit]
+
+    with patch.object(server_module, "_query", mock_query):
+        hits = _detect_contradictions(
+            collection="global",
+            type_tag="pattern",
+            documents=["Boundary pattern"],
+        )
+
+    assert len(hits) == 1
+    assert hits[0]["id"] == "ap3"
