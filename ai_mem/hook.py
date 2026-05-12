@@ -31,7 +31,6 @@ except ImportError:
 FOCUS_ID = "current_focus"
 _STATS_PATH = DB_PATH / "session_stats.json"
 _SESSION_START_FILE = DB_PATH / "session_start.txt"
-_PREV_SESSION_FILE = DB_PATH / "prev_session.json"
 _PREV_SESSION_MAX_AGE_DAYS = 7
 _FOCUS_PREVIEW_CHARS = 150
 
@@ -128,6 +127,7 @@ def main():
 
     if (detect_for_session_start is None or write_to_env_file is None
             or ChromaMemoryRepository is None or GetMemoryUseCase is None
+            or ListCollectionsUseCase is None
             or detect_repo_context is None or record_injection is None):
         return
 
