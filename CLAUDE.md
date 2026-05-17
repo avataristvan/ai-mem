@@ -16,7 +16,7 @@ python3 -m ai_mem.posttool_hook # run PostToolUse hook manually (pipe JSON paylo
 python -m pytest tests/ -v  # run tests
 mem-dream --dry-run         # preview entries without API calls
 mem-dream --mode hier       # consolidate all collections (hier = default)
-mem-dream --mode team --collection repo.ExoDeck  # team exchange, one collection
+mem-dream --mode team --collection repo.my-project  # team exchange, one collection
 ```
 
 ## Architecture
