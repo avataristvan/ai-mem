@@ -125,7 +125,7 @@ Periodically (currently triggered manually by the Navigator), the Dreaming Agent
 
 - **UPDATE** — rewrite an entry for clarity
 - **MERGE** — combine two related entries
-- **DELETE** — remove redundant or stale entries (auto-applied when `auto_apply=true`)
+- **DELETE** — remove redundant or stale entries (auto-applied when `auto_delete=true`)
 - **ADD** — propose a new generalized entry
 
 `mem_dream` operates within a single collection or across all collections (`mode=hier`). It also supports a `team` mode for cross-agent consolidation.

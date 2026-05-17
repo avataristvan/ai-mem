@@ -101,7 +101,7 @@ def register_claude():
         "\n\n"
         "CONSOLIDATION — use mem_dream when: the collection has grown large (>30 entries); "
         "you notice contradictions or stale entries while querying; or the user asks to 'clean up' memories. "
-        "mem_dream returns a structured diff proposal — it does NOT apply changes automatically (unless auto_apply=true for deletes). "
+        "mem_dream returns a structured diff proposal — it does NOT apply changes automatically (unless auto_delete=true for deletes). "
         "Review the proposal and apply agreed changes with mem_add / mem_delete. "
         "The /reflect ritual prompts for consolidation automatically when the threshold is reached."
     )

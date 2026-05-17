@@ -189,7 +189,7 @@ After storing, silently run `mem_list` on the active collection and count entrie
 If yes, run dream in `hier` mode to see across all collections at once:
 
 ```
-mem_dream(mode="hier", auto_apply=false)
+mem_dream(mode="hier", auto_delete=false)
 ```
 
 Review the proposal with the user:

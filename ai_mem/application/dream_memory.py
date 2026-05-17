@@ -205,7 +205,7 @@ class DreamMemoryUseCase:
         self,
         collection: str | None,
         mode: str,
-        auto_apply: bool = False,
+        auto_delete: bool = False,
         focus_hint: str | None = None,
     ) -> str:
         if mode not in MODES:
@@ -292,7 +292,7 @@ class DreamMemoryUseCase:
                 "(review and apply with `mem_add` if confirmed):\n\n" + lines
             )
 
-        if auto_apply:
+        if auto_delete:
             deleted = self._auto_apply_deletes(synthesis, all_entries)
             if deleted:
                 report += "\n\n---\n\n## Auto-Applied Deletions\n\n" + "\n".join(

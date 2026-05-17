@@ -178,7 +178,7 @@ async def list_tools() -> list[types.Tool]:
                 "Modes: 'single-haiku', 'single-sonnet', 'hier' (Haiku fast pass → Sonnet synthesis, default), "
                 "'team' (4-turn Haiku↔Sonnet exchange). "
                 "Invoked via the claude CLI — no API key required. "
-                "Returns a structured diff proposal. Set 'auto_apply' to true to automatically "
+                "Returns a structured diff proposal. Set 'auto_delete' to true to automatically "
                 "execute DELETE actions identified by the synthesis. "
                 "Use 'focus_hint' to steer consolidation — e.g. for expert collections: "
                 "'These are cross-project learnings. Flag entries too project-specific to be worth keeping.'"
@@ -193,7 +193,7 @@ async def list_tools() -> list[types.Tool]:
                         "default": "hier",
                         "description": "Consolidation mode (default: hier)",
                     },
-                    "auto_apply": {
+                    "auto_delete": {
                         "type": "boolean",
                         "default": False,
                         "description": "Automatically delete entries identified as safe to remove",
@@ -457,9 +457,9 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     if name == "mem_dream":
         mode = arguments.get("mode") or "hier"
         col_arg = arguments.get("collection") or None
-        auto_apply = bool(arguments.get("auto_apply", False))
+        auto_delete = bool(arguments.get("auto_delete", False))
         focus_hint = arguments.get("focus_hint") or None
-        result = await asyncio.to_thread(_dream.execute, col_arg, mode, auto_apply, focus_hint)
+        result = await asyncio.to_thread(_dream.execute, col_arg, mode, auto_delete, focus_hint)
         return [types.TextContent(type="text", text=result)]
 
     if name == "mem_train":
