@@ -68,17 +68,18 @@ The `SessionStart` hook injects the active collection on every session start.
 
 ## Lifecycle Hooks
 
-ai-mem registers five Claude Code hooks automatically during install:
+ai-mem registers four Claude Code hooks automatically during install:
 
 | Hook | Trigger | What it does |
 |------|---------|--------------|
 | `SessionStart` | Session opens | Injects `current_focus` + active collection routing |
-| `Stop` | Session closes | Reminds agent to update `current_focus` if files changed |
-| `UserPromptSubmit` | Before each prompt | Injects relevant memories once the ranker is trained (≥10 labeled examples, avg score ≥ 0.55) |
+| `UserPromptSubmit` | Before each prompt | Anti-pattern warnings (always) + relevant memories once ranker is trained (≥10 labeled examples, avg score ≥ 0.55) |
 | `PreToolUse` | Before Write/Edit | Injects relevant past experiences for the file being touched |
 | `PostToolUse` | After Write/Edit | Silent passive training signal — updates `last_accessed_at` on matched entries so the ranker labels them positive |
 
-The PostToolUse hook is what makes the ranker self-calibrating: every file edit is implicit evidence that the matched memory entries were relevant, with no manual `mem_train` calls required.
+**Context stays lean by design.** The `UserPromptSubmit` hook queries the active collection against each incoming prompt and injects only the top-3 relevant entries — never the full collection. A film-shoot prompt retrieves brand-voice context; a Kotlin bug prompt retrieves build conventions — automatically, from the same collection. This is the primary answer to context-bloat: not a global dump, but per-prompt semantic selection.
+
+The `PostToolUse` hook is what makes the ranker self-calibrating: every file edit is implicit evidence that the matched memory entries were relevant, with no manual `mem_train` calls required.
 
 ## Adaptive Re-ranking
 

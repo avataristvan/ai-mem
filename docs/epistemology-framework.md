@@ -60,6 +60,22 @@ The re-ranker is the implicit learning signal: entries that get retrieved and ac
 
 **Split-hint detection** is also code-backed: entries with `access_count ≥ 5` and `text ≥ 150 chars` are flagged in every `mem_query` response as candidates for splitting.
 
+#### Lean Context by Design — Automatic Injection
+
+Context bloat is the primary failure mode for memory-augmented agents: dumping the full collection into every prompt drowns the signal in noise. ai-mem solves this at the hook level, not the agent level.
+
+The `UserPromptSubmit` hook runs before every prompt and queries the active collection semantically against the incoming message. It injects only the **top-3 relevant entries** — never the full collection. A film-shoot prompt retrieves brand-voice context; a Kotlin bug prompt retrieves build conventions. Same collection, different selection, every time.
+
+Two injection paths run independently:
+
+1. **Anti-pattern early warning** — fires unconditionally whenever a repo collection exists. Queries `type="anti-pattern"` at a high-recall threshold (`score ≥ 0.4`). Missing a warning is worse than a false alarm. Output: `[ai-mem warnings]` block with `⚠` prefix, prepended before the regular context block. Bypasses the ranker gate entirely.
+
+2. **Context injection** — fires once the ranker is calibrated (≥10 labeled examples, avg score ≥ 0.55). Injects the top-3 semantically relevant entries from the active collection.
+
+**What the code does:** `userprompt_hook.py` runs both paths on every `UserPromptSubmit` event. The ranker gate on path 2 prevents low-quality injections during early sessions before enough signal has accumulated. The anti-pattern path has no gate — warnings are always relevant.
+
+This is the primary answer to context-bloat: not summarization, not compression, but per-prompt semantic selection at the hook level before the agent sees the message.
+
 #### Typed Causal Edges — Knowledge as a Graph
 
 Raw memory entries store facts in isolation. Typed edges model *relationships* between knowledge — which patterns contradict each other, which fixes address which bugs, which anti-patterns follow from which choices.
