@@ -89,6 +89,17 @@ Both entry types have canonical formats that make them self-retrieving and scann
 
 The leading keyword (`Rule:`, `Tried:`) is the self-retrieving hook — a future query about the same approach will surface the entry without special retrieval logic.
 
+**Values extension:** When an anti-pattern involves human stakeholders — people treated as instrumental variables, trust broken, autonomy overridden — add an `Affected:` field:
+
+```
+Tried: <approach>
+Failed because: <causal reason — including why it is wrong, not just that it failed>
+Affected: <who was affected and how — models the other perspective explicitly>
+Instead: <alternative>
+```
+
+This field forces the system to store *why it matters for others*, not just the pragmatic outcome. The distinction between knowledge-as-power and knowledge-as-wisdom lives here: a rule says "don't do X"; an `Affected:` entry says "when you do X, this is what happens to [person] and why that is wrong." The causal account generalizes to new situations no rule anticipates.
+
 ```
 # After storing a best-practice pattern (canonical format):
 mem_add(documents=["Rule: Use AddMemoryUseCase in tests, not repo.upsert() directly.\nWhen: Writing tests that insert memory entries.\nWhy: AddMemoryUseCase injects required timestamps; ChromaDB rejects empty metadata dicts."],

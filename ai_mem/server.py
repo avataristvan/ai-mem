@@ -97,7 +97,7 @@ async def list_tools() -> list[types.Tool]:
                     "collection": {"type": "string", "description": f"Collection name (default: '{DEFAULT_COLLECTION}')"},
                     "metadatas": {"type": "array", "items": {"type": "object"}, "description": "Optional metadata per entry"},
                     "ttl_days": {"type": "number", "description": "Optional TTL in days — entry is deleted by mem_cleanup after expiry"},
-                    "type": {"type": "string", "description": "Optional entry type tag (e.g. 'feedback', 'reference', 'project', 'user', 'anti-pattern') for later filtering. For type='anti-pattern', use this mandatory structure: 'Tried: <approach>\\nFailed because: <reason>\\nInstead: <alternative>'"},
+                    "type": {"type": "string", "description": "Optional entry type tag (e.g. 'feedback', 'reference', 'project', 'user', 'anti-pattern') for later filtering. For type='anti-pattern', use this mandatory structure: 'Tried: <approach>\\nFailed because: <reason>\\nInstead: <alternative>'. When the anti-pattern involves human stakeholders (people treated as variables, trust broken, social dynamics), add: 'Affected: <who was affected and how>' — this encodes the causal consequence for others, not just the pragmatic failure."},
                 },
                 "required": ["documents", "ids"],
             },
