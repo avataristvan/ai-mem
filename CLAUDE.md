@@ -12,7 +12,6 @@ pip install -e ".[dream]"   # with Anthropic SDK for mem-dream
 python3 -m ai_mem.server    # run MCP server directly
 python3 install.py          # register with Claude Code / Gemini CLI / Cursor
 python3 -m ai_mem.hook          # run SessionStart hook manually
-python3 -m ai_mem.stop_hook     # run Stop hook manually (from a git repo dir)
 python3 -m ai_mem.posttool_hook # run PostToolUse hook manually (pipe JSON payload on stdin)
 python -m pytest tests/ -v  # run tests
 mem-dream --dry-run         # preview entries without API calls
