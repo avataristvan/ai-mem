@@ -44,6 +44,7 @@ def _run_main(
     repo_collection: str = "workspace",
     ranker_signal: str | None = None,
     session_delta: int | None = None,
+    git_commits: list[str] | None = None,
 ) -> str:
     """Run hook.main() with mocked dependencies; return captured stdout.
 
@@ -71,6 +72,7 @@ def _run_main(
         patch.object(hook, "_focus_text", side_effect=fake_focus_text),
         patch.object(hook, "_ranker_signal", return_value=ranker_signal),
         patch.object(hook, "_session_delta", return_value=session_delta),
+        patch.object(hook, "_git_commits_since", return_value=git_commits or []),
         patch.object(hook, "_write_prev_session"),
         patch.object(hook, "_try_seed"),
         patch.object(hook, "detect_for_session_start", return_value=agent_ctx),
@@ -275,3 +277,38 @@ def test_session_delta_none_suppresses_line(tmp_path: Path) -> None:
     parsed = json.loads(out)
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
     assert "Since last session" not in ctx
+
+
+# ---------------------------------------------------------------------------
+# 11. Git commits since last session — commits present
+# ---------------------------------------------------------------------------
+
+def test_git_commits_shown_when_present(tmp_path: Path) -> None:
+    commits = ["abc1234 feat: add dilemma warnings", "def5678 fix: early exit guard"]
+    out = _run_main(
+        tmp_path,
+        focus_map={"global": "some context"},
+        git_commits=commits,
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "Git commits since last session" in ctx
+    assert "abc1234 feat: add dilemma warnings" in ctx
+    assert "def5678 fix: early exit guard" in ctx
+
+
+# ---------------------------------------------------------------------------
+# 12. Git commits since last session — no commits → no block
+# ---------------------------------------------------------------------------
+
+def test_no_git_commits_suppresses_block(tmp_path: Path) -> None:
+    out = _run_main(
+        tmp_path,
+        focus_map={"global": "some context"},
+        git_commits=[],
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "Git commits since last session" not in ctx

@@ -33,6 +33,7 @@ _STATS_PATH = DB_PATH / "session_stats.json"
 _SESSION_START_FILE = DB_PATH / "session_start.txt"
 _PREV_SESSION_MAX_AGE_DAYS = 7
 _FOCUS_PREVIEW_CHARS = 150
+_GIT_COMMITS_MAX = 5
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -51,6 +52,28 @@ def _session_delta(db_path: Path, current_count: int) -> int | None:
         return delta if delta > 0 else None
     except Exception:
         return None
+
+
+def _git_commits_since(db_path: Path) -> list[str]:
+    """Return one-line git log entries since the previous session. Silent on failure."""
+    import subprocess
+    from datetime import datetime
+    prev_file = db_path / "prev_session.json"
+    try:
+        data = json.loads(prev_file.read_text(encoding="utf-8"))
+        age_days = (time.time() - data["ts"]) / 86400
+        if age_days > _PREV_SESSION_MAX_AGE_DAYS:
+            return []
+        since = datetime.fromtimestamp(data["ts"]).strftime("%Y-%m-%dT%H:%M:%S")
+        result = subprocess.run(
+            ["git", "log", "--oneline", f"--since={since}", f"-{_GIT_COMMITS_MAX}"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    except Exception:
+        return []
 
 
 def _write_prev_session(db_path: Path, current_count: int) -> None:
@@ -197,6 +220,10 @@ def main():
         if delta is not None:
             label = "entry" if delta == 1 else "entries"
             parts.append(f"Since last session: {delta} new {label} added")
+
+        git_commits = _git_commits_since(DB_PATH)
+        if git_commits:
+            parts.append("Git commits since last session:\n" + "\n".join(f"  {c}" for c in git_commits))
 
         signal = _ranker_signal(ctx.collection)
         if signal:
