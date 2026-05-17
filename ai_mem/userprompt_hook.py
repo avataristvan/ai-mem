@@ -21,6 +21,7 @@ ANTIPATTERN_MIN_SCORE = 0.4
 DILEMMA_TOP_K = 2
 MAX_CHARS_PER_DILEMMA = 250
 DILEMMA_MIN_SCORE = 0.4
+ANTICIPATION_QUESTION = "  → Antizipation: Wer hat dieselbe Rolle jetzt inne? Was würde mit ihr passieren?"
 
 
 def _load_session_injected(db_path: Path) -> set[str]:
@@ -257,6 +258,8 @@ def main():
             if len(r.text) > MAX_CHARS_PER_ANTIPATTERN:
                 text += "..."
             lines.append(f"⚠ {text}")
+            if "Affected:" in r.text:
+                lines.append(ANTICIPATION_QUESTION)
             entry_id = getattr(r, "id", None)
             if entry_id is not None:
                 injected_ids.add(entry_id)

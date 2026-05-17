@@ -490,3 +490,58 @@ def test_dilemma_below_min_score_not_injected(tmp_path: Path) -> None:
     )
 
     assert out == ""
+
+
+# ---------------------------------------------------------------------------
+# 18. Anti-pattern with Affected: field appends anticipation question
+# ---------------------------------------------------------------------------
+
+def test_antipattern_with_affected_appends_anticipation(tmp_path: Path) -> None:
+    storage = _make_storage(labeled_count=0)
+    registry = _make_registry("repo.my-project")
+    ap = _make_result(
+        0.85,
+        "Tried: X\nFailed because: Y\nAffected: maintainer lost trust\nInstead: Z",
+        entry_id="ap-affected",
+    )
+
+    out = _run_main(
+        tmp_path,
+        _stdin_json(),
+        antipattern_results=[ap],
+        storage=storage,
+        registry=registry,
+        repo_collection="repo.my-project",
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "Antizipation" in ctx
+    assert "Wer hat dieselbe Rolle" in ctx
+
+
+# ---------------------------------------------------------------------------
+# 19. Anti-pattern without Affected: field does NOT append anticipation question
+# ---------------------------------------------------------------------------
+
+def test_antipattern_without_affected_no_anticipation(tmp_path: Path) -> None:
+    storage = _make_storage(labeled_count=0)
+    registry = _make_registry("repo.my-project")
+    ap = _make_result(
+        0.85,
+        "Tried: X\nFailed because: Y\nInstead: Z",
+        entry_id="ap-no-affected",
+    )
+
+    out = _run_main(
+        tmp_path,
+        _stdin_json(),
+        antipattern_results=[ap],
+        storage=storage,
+        registry=registry,
+        repo_collection="repo.my-project",
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "Antizipation" not in ctx
