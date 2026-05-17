@@ -18,6 +18,9 @@ SESSION_TTL_HOURS = 4
 ANTIPATTERN_TOP_K = 2
 MAX_CHARS_PER_ANTIPATTERN = 200
 ANTIPATTERN_MIN_SCORE = 0.4
+DILEMMA_TOP_K = 2
+MAX_CHARS_PER_DILEMMA = 250
+DILEMMA_MIN_SCORE = 0.4
 
 
 def _load_session_injected(db_path: Path) -> set[str]:
@@ -116,6 +119,19 @@ def _antipattern_hits(query_uc, collection: str, query: str):
         return []
 
 
+def _dilemma_hits(query_uc, collection: str, query: str):
+    try:
+        results = query_uc.execute(
+            collection=collection,
+            query=query,
+            n_results=DILEMMA_TOP_K,
+            type_filter="dilemma",
+        )
+        return [r for r in results if (r.score or 0.0) >= DILEMMA_MIN_SCORE]
+    except Exception:
+        return []
+
+
 def _labeled_count(storage, registry, collection: str) -> int:
     try:
         scope_key = registry.scope_key(collection)
@@ -168,6 +184,7 @@ def main():
     repo_collection = None
     repo_ok = False
     antipattern_results = []
+    dilemma_results = []
     try:
         ctx = detect_repo_context()
         if ctx.collection not in (GLOBAL_COLLECTION, WORKSPACE_COLLECTION):
@@ -175,10 +192,11 @@ def main():
             repo_results = _hits(query_uc, repo_collection, query)
             repo_ok = _qualifies(storage, registry, repo_results, repo_collection)
             antipattern_results = _antipattern_hits(query_uc, repo_collection, query)
+            dilemma_results = _dilemma_hits(query_uc, repo_collection, query)
     except Exception:
         pass
 
-    if not global_ok and not repo_ok and not antipattern_results:
+    if not global_ok and not repo_ok and not antipattern_results and not dilemma_results:
         return
 
     collected: list[tuple[str, object]] = []
@@ -193,13 +211,14 @@ def main():
     except Exception:
         pass
 
-    if not collected and not antipattern_results:
+    if not collected and not antipattern_results and not dilemma_results:
         return
 
     # Per-session dedup: skip entries already injected in this session.
     already_injected = _load_session_injected(DB_PATH)
     collected = [(coll, r) for coll, r in collected if getattr(r, "id", None) not in already_injected or getattr(r, "id", None) is None]
     antipattern_results = [r for r in antipattern_results if getattr(r, "id", None) not in already_injected]
+    dilemma_results = [r for r in dilemma_results if getattr(r, "id", None) not in already_injected]
 
     # Combined budget cap: include entries until MAX_TOTAL_CHARS is reached.
     budget_collected: list[tuple[str, object]] = []
@@ -212,13 +231,26 @@ def main():
         chars_used += entry_len
     collected = budget_collected
 
-    if not collected and not antipattern_results:
+    if not collected and not antipattern_results and not dilemma_results:
         return
 
     lines: list[str] = []
     injected_ids: set[str] = set()
 
+    if dilemma_results:
+        lines.append("[ai-mem dilemmas]")
+        for r in dilemma_results:
+            text = r.text[:MAX_CHARS_PER_DILEMMA]
+            if len(r.text) > MAX_CHARS_PER_DILEMMA:
+                text += "..."
+            lines.append(f"⚖ {text}")
+            entry_id = getattr(r, "id", None)
+            if entry_id is not None:
+                injected_ids.add(entry_id)
+
     if antipattern_results:
+        if lines:
+            lines.append("")
         lines.append("[ai-mem warnings]")
         for r in antipattern_results:
             text = r.text[:MAX_CHARS_PER_ANTIPATTERN]

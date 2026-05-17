@@ -55,6 +55,7 @@ def _run_main(
     global_results=None,
     repo_results=None,
     antipattern_results=None,
+    dilemma_results=None,
     storage=None,
     registry=None,
     repo_collection: str | None = None,
@@ -63,6 +64,7 @@ def _run_main(
     global_results = global_results or []
     repo_results = repo_results or []
     antipattern_results = antipattern_results or []
+    dilemma_results = dilemma_results or []
     storage = storage or _make_storage(0)
     registry = registry or _make_registry()
 
@@ -71,6 +73,8 @@ def _run_main(
     def fake_hits(collection, query, n_results, type_filter=None, max_age_days=None):
         if type_filter == "anti-pattern":
             return antipattern_results
+        if type_filter == "dilemma":
+            return dilemma_results
         if collection == "global":
             return global_results
         return repo_results
@@ -412,3 +416,77 @@ def test_corrupt_session_file_is_ignored(tmp_path: Path) -> None:
     parsed = json.loads(out)
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
     assert "memory A" in ctx
+
+
+# ---------------------------------------------------------------------------
+# 15. Dilemma warnings fire without ranker qualification
+# ---------------------------------------------------------------------------
+
+def test_dilemma_fires_without_ranker_qualification(tmp_path: Path) -> None:
+    storage = _make_storage(labeled_count=0)
+    registry = _make_registry("repo.my-project")
+    d = _make_result(0.75, "Tension: A vs. B\nContext A: ...\nContext B: ...\nQuestions: ?", entry_id="d-1")
+
+    out = _run_main(
+        tmp_path,
+        _stdin_json(),
+        dilemma_results=[d],
+        storage=storage,
+        registry=registry,
+        repo_collection="repo.my-project",
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "[ai-mem dilemmas]" in ctx
+    assert "⚖" in ctx
+    assert "Tension: A vs. B" in ctx
+
+
+# ---------------------------------------------------------------------------
+# 16. Dilemma block precedes warnings and context blocks
+# ---------------------------------------------------------------------------
+
+def test_dilemma_block_precedes_warnings_and_context(tmp_path: Path) -> None:
+    storage = _make_storage(labeled_count=15)
+    registry = _make_registry("repo.my-project")
+    d = _make_result(0.75, "Tension: X vs. Y\nQuestions: ?", entry_id="d-1")
+    ap = _make_result(0.85, "Tried: A\nFailed because: B\nInstead: C", entry_id="ap-1")
+    regular = _make_result(0.9, "regular memory", entry_id="r-1")
+
+    out = _run_main(
+        tmp_path,
+        _stdin_json(),
+        repo_results=[regular],
+        antipattern_results=[ap],
+        dilemma_results=[d],
+        storage=storage,
+        registry=registry,
+        repo_collection="repo.my-project",
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert ctx.index("[ai-mem dilemmas]") < ctx.index("[ai-mem warnings]")
+    assert ctx.index("[ai-mem warnings]") < ctx.index("[ai-mem]")
+
+
+# ---------------------------------------------------------------------------
+# 17. Dilemma below DILEMMA_MIN_SCORE is filtered
+# ---------------------------------------------------------------------------
+
+def test_dilemma_below_min_score_not_injected(tmp_path: Path) -> None:
+    storage = _make_storage(labeled_count=0)
+    registry = _make_registry("repo.my-project")
+    d = _make_result(0.2, "Tension: low score", entry_id="d-low")
+
+    out = _run_main(
+        tmp_path,
+        _stdin_json(),
+        dilemma_results=[d],
+        storage=storage,
+        registry=registry,
+        repo_collection="repo.my-project",
+    )
+
+    assert out == ""
