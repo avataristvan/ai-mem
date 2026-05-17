@@ -43,21 +43,21 @@ A known problem in recommendation systems — the transition from cosine-only to
 | Idea | Impact | Effort | Status |
 |------|--------|--------|--------|
 | Pre-Plan-Hook / `/plan` integration | High | Medium | Todo |
-| Ranker-Confidence-Signal at SessionStart | High | Low | Todo |
-| Cross-Session-Delta at SessionStart | Medium | Low | Todo |
-| Real-time contradiction detection on `mem_add` | Medium | Medium | Todo |
+| Ranker-Confidence-Signal at SessionStart | High | Low | **Done** (hook.py `_ranker_signal()`) |
+| Cross-Session-Delta at SessionStart | Medium | Low | **Done** (hook.py `_session_delta()` + `_git_commits_since()`) |
+| Real-time contradiction detection on `mem_add` | Medium | Medium | **Done** (`server.py` — cosine check on `mem_add`, flags `possible_contradictions`) |
 
 ### Detail: Pre-Plan-Hook
 Before the first file edit, query anti-patterns for the planned approach. Could be a `/plan` skill that does `mem_query(type="anti-pattern", query=<plan summary>)` and surfaces warnings before implementation starts.
 
-### Detail: Ranker-Confidence-Signal
-At SessionStart or UserPromptSubmit: show labeled example count and avg_score for the active collection. Agent calibrates trust in injected memories accordingly. Low-effort addition to `hook.py` or `userprompt_hook.py`.
+### Detail: Ranker-Confidence-Signal ✓
+Implemented in `hook.py` via `_ranker_signal()`. Emits labeled-example count and calibration status at SessionStart. Agent knows whether to trust injected memories or query manually.
 
-### Detail: Cross-Session-Delta
-At SessionStart: "since last session — 3 new entries stored, 2 files frequently edited." Accelerates context reconstruction without requiring `mem_query` calls.
+### Detail: Cross-Session-Delta ✓
+Implemented in `hook.py` via `_session_delta()` (entry count) and `_git_commits_since()` (up to 5 git commits since previous session timestamp). Both read from `prev_session.json`.
 
-### Detail: Real-time Contradiction Detection
-On `mem_add`: lightweight check if a new entry contradicts an existing one. Currently only happens during `mem_dream`. A fast cosine similarity check against `type=pattern` entries on anti-pattern storage (auto-link suggestion already does a version of this) could be extended to flag contradictions inline.
+### Detail: Real-time Contradiction Detection ✓
+Implemented in `server.py` on `mem_add`. Runs cosine similarity against existing entries; surfaces `possible_contradictions` in the response when a near-duplicate or conflicting entry is found.
 
 ---
 
