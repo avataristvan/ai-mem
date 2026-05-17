@@ -86,6 +86,7 @@ Both entry types have canonical formats that make them self-retrieving and scann
 |---|---|
 | `pattern` | `Rule: <rule>\nWhen: <context>\nWhy: <invariant>` |
 | `anti-pattern` | `Tried: <approach>\nFailed because: <reason>\nInstead: <alternative>` |
+| `dilemma` | `Tension: <value A> vs. <value B>\nContext A: <when/why>\nContext B: <when/why>\nAffected A: <who, how>\nAffected B: <who, how>\nQuestions: <what to ask to determine which context applies>` |
 
 The leading keyword (`Rule:`, `Tried:`) is the self-retrieving hook — a future query about the same approach will surface the entry without special retrieval logic.
 
