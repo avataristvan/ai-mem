@@ -516,8 +516,8 @@ def test_antipattern_with_affected_appends_anticipation(tmp_path: Path) -> None:
 
     parsed = json.loads(out)
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
-    assert "Antizipation" in ctx
-    assert "Wer hat dieselbe Rolle" in ctx
+    assert "Anticipation" in ctx
+    assert "Who holds the same role" in ctx
 
 
 # ---------------------------------------------------------------------------
@@ -544,4 +544,4 @@ def test_antipattern_without_affected_no_anticipation(tmp_path: Path) -> None:
 
     parsed = json.loads(out)
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
-    assert "Antizipation" not in ctx
+    assert "Anticipation" not in ctx

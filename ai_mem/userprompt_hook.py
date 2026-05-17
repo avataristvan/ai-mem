@@ -21,7 +21,7 @@ ANTIPATTERN_MIN_SCORE = 0.4
 DILEMMA_TOP_K = 2
 MAX_CHARS_PER_DILEMMA = 250
 DILEMMA_MIN_SCORE = 0.4
-ANTICIPATION_QUESTION = "  → Antizipation: Wer hat dieselbe Rolle jetzt inne? Was würde mit ihr passieren?"
+ANTICIPATION_QUESTION = "  → Anticipation: Who holds the same role now? What would happen to them?"
 
 
 def _load_session_injected(db_path: Path) -> set[str]:
