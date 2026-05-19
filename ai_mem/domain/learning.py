@@ -7,8 +7,6 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 
-_NO_TTL_HORIZON_DAYS = 365.0  # placeholder horizon for entries without TTL
-
 
 @dataclass(frozen=True)
 class RankingFeatures:
@@ -23,7 +21,6 @@ class RankingFeatures:
     last_access_days: float         # falls back to age_days if never accessed
     access_count: int
     has_ttl: bool
-    expires_in_days: float          # only meaningful when has_ttl is True
     session_hit: bool = False       # True when this entry was returned in a prior query this session
 
     @property
@@ -31,7 +28,6 @@ class RankingFeatures:
         return self.access_count == 0
 
     def as_vector(self) -> list[float]:
-        ttl_horizon = self.expires_in_days if self.has_ttl else _NO_TTL_HORIZON_DAYS
         return [
             self.cosine_similarity,
             self.age_days,
@@ -39,7 +35,6 @@ class RankingFeatures:
             float(self.access_count),
             1.0 if self.is_never_accessed else 0.0,
             1.0 if self.has_ttl else 0.0,
-            ttl_horizon,
             math.log1p(max(0.0, self.age_days)),
             math.log1p(max(0.0, self.last_access_days)),
             math.log1p(max(0.0, float(self.access_count))),

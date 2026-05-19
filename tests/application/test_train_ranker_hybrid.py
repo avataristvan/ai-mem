@@ -31,7 +31,6 @@ def _features() -> RankingFeatures:
         last_access_days=0.0,
         access_count=0,
         has_ttl=False,
-        expires_in_days=0.0,
     )
 
 

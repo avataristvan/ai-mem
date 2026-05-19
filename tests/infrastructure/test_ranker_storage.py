@@ -21,7 +21,6 @@ def _example(memory_id: str, target: float | None = None, retrieved_at: float = 
         last_access_days=1.0,
         access_count=2,
         has_ttl=False,
-        expires_in_days=0.0,
     )
     return TrainingExample(
         memory_id=memory_id,

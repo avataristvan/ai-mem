@@ -136,9 +136,11 @@ mem_add(
 
 ---
 
-## Step 4.5 — Expert propagation (only if subagents produced [retro] blocks)
+## Step 4.5 — Expert propagation
 
-For each subagent that contributed a `learned:` line in Step 1, decide: is this learning about **how to approach a problem** (technique, process, pattern) — or about **what was done in this project** (specific decision, project fact)?
+**A: Subagent retros** (only if `[retro]` blocks were found in Step 1)
+
+For each subagent that contributed a `learned:` line, decide: is this learning about **how to approach a problem** (technique, process, pattern) — or about **what was done in this project** (specific decision, project fact)?
 
 - Process/technique → candidate for the expert collection
 - Project-specific → stays in the project collection only
@@ -158,9 +160,28 @@ mem_add(
 )
 ```
 
-The expert collection accumulates across all projects. Over time it gives the agent genuine cross-project intuition — the same way a senior engineer recognizes patterns they've seen before, regardless of the specific codebase.
+**B: Direct coding by orchestrator** (only if commits were found in Step 3.5 and no coding subagent was used)
 
-Skip entirely if no subagents were used or no `[retro]` blocks were found.
+Ask:
+
+> **"Gab es in dieser Session transferierbare Coding-Grundsätze — Muster die in jedem Projekt gelten würden, nicht nur hier?"**
+
+If the user names one or more, store each in the appropriate collection — `global` for universal principles, or a `subagent.*` collection if a coding agent exists in this setup:
+
+```
+mem_add(
+    documents=[<principle>],
+    collection=<global or subagent.*>,
+    type="feedback",   # or "anti-pattern" / "pattern" as appropriate
+    ids=["<slug>"],
+)
+```
+
+Concrete signals to watch for: a fix that corrects a wrong mental model, a platform invariant, an architectural rule that held across layers.
+
+Skip B silently if the session had no commits or was purely exploratory.
+
+The expert collection accumulates across all projects. Over time it gives the agent genuine cross-project intuition — the same way a senior engineer recognizes patterns they've seen before, regardless of the specific codebase.
 
 ---
 

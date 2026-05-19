@@ -87,6 +87,8 @@ async def list_tools() -> list[types.Tool]:
                 f"Leave 'collection' empty to use the default ('{DEFAULT_COLLECTION}'). "
                 "Use the repo collection injected at session start (e.g. 'repo.ai-mem') for repo-specific context, "
                 "or 'global' for cross-session knowledge shared across all repos. "
+                "When the user asks to store something for a different project (e.g. 'note for my-app'), "
+                "pass that project's collection explicitly (e.g. 'repo.my-app') — never rely on the active collection default for cross-project intent. "
                 "Set 'ttl_days' to expire the entry automatically (e.g. 30 for one month)."
             ),
             inputSchema={
@@ -111,6 +113,7 @@ async def list_tools() -> list[types.Tool]:
                 f"Leave 'collection' empty to search the default ('{DEFAULT_COLLECTION}'). "
                 "Use the repo collection injected at session start (e.g. 'repo.ai-mem') for repo-specific context, "
                 "or 'global' for cross-session general knowledge. "
+                "When the user asks to search in a different project, pass that project's collection explicitly (e.g. 'repo.my-app'). "
                 "Use 'max_age_days' to exclude older entries."
             ),
             inputSchema={

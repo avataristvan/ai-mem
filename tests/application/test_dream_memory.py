@@ -96,10 +96,10 @@ class TestAddTargetRe:
         assert m.group(2).strip() == "workspace"
 
     def test_parses_dot_bullet(self):
-        text = "• ADD my_entry [target=repo.ExoDeck]: some content"
+        text = "• ADD my_entry [target=repo.my-app]: some content"
         m = _ADD_TARGET_RE.search(text)
         assert m is not None
-        assert m.group(2).strip() == "repo.ExoDeck"
+        assert m.group(2).strip() == "repo.my-app"
 
     def test_case_insensitive(self):
         text = "- add my_entry [target=global]: some content"
@@ -130,12 +130,12 @@ class TestAddTargetRe:
 class TestPropagationCandidates:
     def test_returns_candidates_with_foreign_target(self):
         synthesis = "- ADD new_pattern [target=global]: a broadly useful pattern"
-        result = _propagation_candidates(synthesis, {"repo.ExoDeck"})
+        result = _propagation_candidates(synthesis, {"repo.my-app"})
         assert result == [("new_pattern", "global")]
 
     def test_excludes_candidates_in_source_collections(self):
-        synthesis = "- ADD same_col_entry [target=repo.ExoDeck]: stays local"
-        result = _propagation_candidates(synthesis, {"repo.ExoDeck"})
+        synthesis = "- ADD same_col_entry [target=repo.my-app]: stays local"
+        result = _propagation_candidates(synthesis, {"repo.my-app"})
         assert result == []
 
     def test_empty_synthesis_returns_empty(self):
@@ -147,11 +147,11 @@ class TestPropagationCandidates:
 
     def test_mixed_targets_only_returns_foreign(self):
         synthesis = (
-            "- ADD local_tip [target=repo.ExoDeck]: project-specific\n"
+            "- ADD local_tip [target=repo.my-app]: project-specific\n"
             "- ADD global_pattern [target=global]: universal\n"
             "- ADD workspace_tip [target=workspace]: cross-project\n"
         )
-        result = _propagation_candidates(synthesis, {"repo.ExoDeck"})
+        result = _propagation_candidates(synthesis, {"repo.my-app"})
         assert ("local_tip", "global") not in result
         assert ("global_pattern", "global") in result
         assert ("workspace_tip", "workspace") in result
@@ -159,10 +159,10 @@ class TestPropagationCandidates:
 
     def test_multiple_source_collections(self):
         synthesis = (
-            "- ADD entry_a [target=repo.ExoDeck]: already a source\n"
+            "- ADD entry_a [target=repo.my-app]: already a source\n"
             "- ADD entry_b [target=global]: propagate this\n"
         )
-        result = _propagation_candidates(synthesis, {"repo.ExoDeck", "repo.ai-mem"})
+        result = _propagation_candidates(synthesis, {"repo.my-app", "repo.ai-mem"})
         assert result == [("entry_b", "global")]
 
     def test_whitespace_in_target_is_stripped(self):

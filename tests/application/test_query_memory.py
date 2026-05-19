@@ -1,6 +1,7 @@
 """QueryMemoryUseCase: empty collection, ranking, access tracking."""
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pytest
@@ -81,3 +82,23 @@ def test_query_increments_access_count(tmp_repo, track_access, tmp_path):
     fetched = GetMemoryUseCase(tmp_repo).execute("test_col", ["a"])
     assert fetched[0].metadata["access_count"] == 3
     assert fetched[0].metadata["last_accessed_at"] >= fetched[0].metadata["created_at"]
+
+
+def test_null_ranker_session_hit_penalty():
+    from ai_mem.domain.learning import RankingFeatures
+    ranker = NullRanker()
+    features = [
+        RankingFeatures(
+            cosine_similarity=0.9, age_days=0, last_access_days=0,
+            access_count=10, has_ttl=False, session_hit=True,
+        ),
+        RankingFeatures(
+            cosine_similarity=0.85, age_days=0, last_access_days=0,
+            access_count=0, has_ttl=False, session_hit=False,
+        ),
+    ]
+    from ai_mem.infrastructure.null_ranker import _SESSION_HIT_PENALTY, _EXPLORE_BONUS
+    scores = ranker.rank(features)
+    assert abs(scores[0] - (0.9 * _SESSION_HIT_PENALTY + _EXPLORE_BONUS / math.sqrt(10))) < 1e-6
+    assert abs(scores[1] - (0.85 + _EXPLORE_BONUS)) < 1e-6
+    assert scores[1] > scores[0]
