@@ -25,7 +25,7 @@ Capability-centric DDD — three layers, no upward imports.
 
 **Domain** (`ai_mem/domain/`) — pure contracts, no I/O, no torch.
 - `memory.py` — `MemoryEntry`, `QueryResult`, `CollectionInfo`, `MemoryRepository` Protocol, `MemoryEdge`, `EdgeType`
-- `learning.py` — `RankingFeatures` (frozen, 10-element `as_vector()`), `TrainingExample`, `TrainingMetrics`, `RankerScope`, `LearnedRanker` Protocol, `TrainingBufferRepository` Protocol, `RankerProvider` Protocol
+- `learning.py` — `RankingFeatures` (frozen, 9-element `as_vector()`), `TrainingExample`, `TrainingMetrics`, `RankerScope`, `LearnedRanker` Protocol, `TrainingBufferRepository` Protocol, `RankerProvider` Protocol
 
 **Application** (`ai_mem/application/`) — one use case per file, single `execute()`, deps injected via `__init__`.
 - `QueryMemoryUseCase` — top-50 fetch → build features → `RankerProvider.get()` → re-rank → truncate → track access → record training signal → 1-hop edge follow (budget: 2 linked entries appended)
@@ -39,8 +39,8 @@ Capability-centric DDD — three layers, no upward imports.
 **Infrastructure** (`ai_mem/infrastructure/`)
 - `ChromaMemoryRepository` — timestamps as Unix float metadata: `created_at`, `expires_at`, `last_accessed_at`, `access_count`
 - `BM25MemoryRepository` — optional wrapper; fetches 50 candidates from inner repo, fuses BM25+cosine scores, returns hybrid-ranked results. Requires `rank_bm25` (`.[hybrid]`). Wired in `server.py` and `userprompt_hook.py` with `try/except ImportError` fallback.
-- `TorchMicroRanker` — `[10→32→16→1]` MLP, AdamW lr=1e-3, BCE + 0.3×contrastive loss. `seed` param for deterministic init in tests only.
-- `NullRanker` — returns `cosine_similarity` scores unchanged; active when torch is absent
+- `TorchMicroRanker` — `[9→32→16→1]` MLP, AdamW lr=1e-3, BCE + 0.3×contrastive loss. `seed` param for deterministic init in tests only.
+- `NullRanker` — UCB fallback ranker: `cosine_similarity * penalty + 0.15/sqrt(access_count)`; session-hit penalty 0.7; exploration bonus decays to ~0 at high access_count; active when torch is absent
 - `RankerStorage` — implements `TrainingBufferRepository`; JSONL buffer + `.pt` weights per scope key
 
 **Adapter** (`ai_mem/server.py`) — wires use cases at module load, exposes MCP tools. Claude Code lifecycle hooks:

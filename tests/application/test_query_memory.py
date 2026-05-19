@@ -90,11 +90,11 @@ def test_null_ranker_session_hit_penalty():
     features = [
         RankingFeatures(
             cosine_similarity=0.9, age_days=0, last_access_days=0,
-            access_count=10, has_ttl=False, session_hit=True,
+            access_count=10, session_hit=True,
         ),
         RankingFeatures(
             cosine_similarity=0.85, age_days=0, last_access_days=0,
-            access_count=0, has_ttl=False, session_hit=False,
+            access_count=0, session_hit=False,
         ),
     ]
     from ai_mem.infrastructure.null_ranker import _SESSION_HIT_PENALTY, _EXPLORE_BONUS

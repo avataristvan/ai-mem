@@ -41,7 +41,6 @@ def _features() -> RankingFeatures:
         age_days=0.0,
         last_access_days=0.0,
         access_count=0,
-        has_ttl=False,
     )
 
 

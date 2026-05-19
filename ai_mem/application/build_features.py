@@ -24,7 +24,6 @@ class BuildFeaturesUseCase:
         created_at: float = meta.get("created_at", now)
         access_count: int = min(int(meta.get("access_count", 0)), _ACCESS_COUNT_CAP)
         last_accessed_at: float = meta.get("last_accessed_at", created_at)
-        expires_at: float | None = meta.get("expires_at")
 
         age_days = max(0.0, (now - created_at) / 86400)
         last_access_days = max(0.0, (now - last_accessed_at) / 86400)
@@ -34,6 +33,5 @@ class BuildFeaturesUseCase:
             age_days=age_days,
             last_access_days=last_access_days,
             access_count=access_count,
-            has_ttl=expires_at is not None,
             session_hit=session_hit,
         )

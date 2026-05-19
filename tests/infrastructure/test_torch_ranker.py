@@ -18,7 +18,6 @@ def _features(cosine_similarity: float = 0.2) -> RankingFeatures:
         age_days=1.0,
         last_access_days=1.0,
         access_count=1,
-        has_ttl=False,
     )
 
 

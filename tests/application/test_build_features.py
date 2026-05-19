@@ -17,7 +17,6 @@ def test_defaults_when_metadata_empty():
     feats = uc.execute([_result(metadata={})], now)
     f = feats[0]
     assert f.access_count == 0
-    assert f.has_ttl is False
     assert f.age_days == 0.0
     assert f.last_access_days == 0.0
 
@@ -38,20 +37,11 @@ def test_last_access_falls_back_to_created_when_missing():
     assert abs(feats[0].last_access_days - 1.0) < 0.01
 
 
-def test_has_ttl_when_expires_at_set():
-    now = time.time()
-    uc = BuildFeaturesUseCase()
-    feats = uc.execute(
-        [_result(metadata={"created_at": now, "expires_at": now + 10 * 86400})], now
-    )
-    assert feats[0].has_ttl is True
-
-
 def test_as_vector_length():
     now = time.time()
     uc = BuildFeaturesUseCase()
     feats = uc.execute([_result()], now)
-    assert len(feats[0].as_vector()) == 10
+    assert len(feats[0].as_vector()) == 9
 
 
 def test_session_hit_false_by_default():
@@ -59,7 +49,7 @@ def test_session_hit_false_by_default():
     uc = BuildFeaturesUseCase()
     feats = uc.execute([_result(id_="x")], now)
     assert feats[0].session_hit is False
-    assert feats[0].as_vector()[9] == 0.0
+    assert feats[0].as_vector()[8] == 0.0
 
 
 def test_session_hit_true_when_id_in_hits():

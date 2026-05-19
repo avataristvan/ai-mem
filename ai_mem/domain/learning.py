@@ -20,7 +20,6 @@ class RankingFeatures:
     age_days: float                 # now - created_at
     last_access_days: float         # falls back to age_days if never accessed
     access_count: int
-    has_ttl: bool
     session_hit: bool = False       # True when this entry was returned in a prior query this session
 
     @property
@@ -34,7 +33,6 @@ class RankingFeatures:
             self.last_access_days,
             float(self.access_count),
             1.0 if self.is_never_accessed else 0.0,
-            1.0 if self.has_ttl else 0.0,
             math.log1p(max(0.0, self.age_days)),
             math.log1p(max(0.0, self.last_access_days)),
             math.log1p(max(0.0, float(self.access_count))),
