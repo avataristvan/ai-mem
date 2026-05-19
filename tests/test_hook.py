@@ -74,7 +74,6 @@ def _run_main(
         patch.object(hook, "_session_delta", return_value=session_delta),
         patch.object(hook, "_git_commits_since", return_value=git_commits or []),
         patch.object(hook, "_write_prev_session"),
-        patch.object(hook, "_try_seed"),
         patch.object(hook, "detect_for_session_start", return_value=agent_ctx),
         patch.object(hook, "write_to_env_file"),
         patch.object(hook, "ChromaMemoryRepository"),

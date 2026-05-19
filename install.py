@@ -197,7 +197,26 @@ Initialize or update the ai-mem memory for the current project scope.
    - ids: ["current_focus"]
    - collection: "repo.<scope>"
 
-5. Confirm: "Done. Future sessions in this scope will use collection 'repo.<scope>'."
+5. Seed the collection by exploring the repo with your tools (Read, Bash, Grep).
+   Answer each question below and store the answer with a separate mem_add call.
+   Skip a question if the repo is too new or empty to answer it meaningfully.
+
+   a. What is this project?
+      Read README, pyproject.toml, package.json, or equivalent to find out.
+      mem_add(ids=["seed_project"], collection="repo.<scope>",
+              documents=[<answer>], metadatas=[{"type": "project", "seeded_by": "mem-init"}])
+
+   b. What are the non-obvious architectural decisions — things not immediately visible from the directory structure?
+      mem_add(ids=["seed_architecture"], collection="repo.<scope>",
+              documents=[<answer>], metadatas=[{"type": "pattern", "seeded_by": "mem-init"}])
+
+   c. What conventions or gotchas would surprise a new contributor?
+      mem_add(ids=["seed_conventions"], collection="repo.<scope>",
+              documents=[<answer>], metadatas=[{"type": "pattern", "seeded_by": "mem-init"}])
+
+   Re-running /mem-init updates these entries in place (same ids = upsert).
+
+6. Confirm: "Done. Memory initialized for 'repo.<scope>'. Re-run /mem-init after major structural changes."
 
 To set a global focus (surfaced in every session across all repos):
   Call mem_add with ids=["current_focus"] and collection="global".

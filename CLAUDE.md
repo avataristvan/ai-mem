@@ -51,7 +51,6 @@ Capability-centric DDD — three layers, no upward imports.
 
 **Utility modules** (not use-case classes — standalone functions, no DI):
 - `session_stats.py` — `record_injection` / `injection_rate`; rolling 20-session JSONL at `{DB_PATH}/session_stats.json`
-- `repo_seeder.py` — `seed_collection`; reads CLAUDE.md H2 sections → `AddMemoryUseCase`; gated by `injection_rate >= SEED_THRESHOLD (0.60)`
 
 ## Key Conventions
 
@@ -61,9 +60,6 @@ Capability-centric DDD — three layers, no upward imports.
 - `_FETCH_K = 50` in `QueryMemoryUseCase` — always over-fetches 50 candidates before re-ranking; `n_results` only controls final truncation.
 - Hybrid mode: buffer and weights files are keyed by **group name**, not collection name. `RankerRegistry.scope_key()` resolves this.
 - `source_collection: str | None` on `TrainingExample` — `None` means the field was absent in older buffer files (backwards-compat on deserialize).
-- `_try_seed` in `hook.py` checks `collection count == 0` (or not listed) before seeding; wrapped in `try/except` so it is always silent.
-- `hook.py` records global injection stats (`record_injection`) before `_try_seed` so the first-ever session counts toward the threshold.
-- Section splitting in `repo_seeder.py` only includes H2 sections (`## `); the H1 intro block is intentionally excluded.
 - `BM25MemoryRepository` is transparent to the application layer — `QueryResult.score` holds the fused hybrid score, which becomes `RankingFeatures.cosine_similarity` in `BuildFeaturesUseCase`. The app layer never detects the wrapper.
 - Tests that call `upsert` directly must include non-empty metadata (ChromaDB rejects empty dicts). Use `AddMemoryUseCase` in tests to avoid this — it always injects timestamps.
 - `type` metadata field: `mem_add` accepts an optional `type` param (e.g. `"feedback"`, `"reference"`, `"project"`, `"user"`). `mem_query` accepts a matching `type` filter. ChromaDB `$and` is used when both `max_age_days` and `type_filter` are set.

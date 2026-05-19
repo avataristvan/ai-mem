@@ -116,31 +116,6 @@ def _ranker_signal(collection: str) -> str | None:
         return None
 
 
-def _try_seed(ctx, repo, stats_path: Path) -> None:
-    try:
-        from ai_mem.application.add_memory import AddMemoryUseCase
-        from ai_mem.application.list_collections import ListCollectionsUseCase
-        from ai_mem.repo_context import WORKSPACE_COLLECTION
-        from ai_mem.repo_seeder import seed_collection
-
-        if ctx.collection == WORKSPACE_COLLECTION or ctx.claude_md_dir is None:
-            return
-
-        collections = ListCollectionsUseCase(repo).execute()
-        existing = {c.name: c.count for c in collections}
-        if existing.get(ctx.collection, 0) > 0:
-            return
-
-        add_uc = AddMemoryUseCase(repo)
-        seed_collection(
-            collection=ctx.collection,
-            claude_md_path=ctx.claude_md_dir / "CLAUDE.md",
-            add_uc=add_uc,
-            stats_path=stats_path,
-        )
-    except Exception:
-        pass
-
 
 def main():
     try:
@@ -193,8 +168,6 @@ def main():
             record_injection(_STATS_PATH, GLOBAL_COLLECTION, injected=global_focus is not None)
         except Exception:
             pass
-
-        _try_seed(ctx, repo, _STATS_PATH)
 
         parts = []
         if repo_focus:
