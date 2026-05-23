@@ -11,7 +11,7 @@ _BM25_FETCH = 50
 def _normalize(scores: list[float]) -> list[float]:
     lo, hi = min(scores), max(scores)
     if hi == lo:
-        return [1.0] * len(scores)
+        return [1.0] * len(scores)  # all equal → treat as maximally relevant (neutral position)
     span = hi - lo
     return [(s - lo) / span for s in scores]
 
