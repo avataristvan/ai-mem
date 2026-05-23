@@ -86,3 +86,9 @@ Entries can be linked with directional typed edges (`contradicts`, `fixes`, `cau
 **MCP tools**: `mem_link(source_id, target_id, edge_type, collection)` and `mem_edges(entry_id, collection)`.
 
 **Test for edge-follow**: the `linked_target` entry must NOT be semantically similar to the query — otherwise ChromaDB returns it directly and `via_edge` is never set (the dedup guard skips it). Use semantically unrelated text (e.g. `ZZZQQQXXX boilerplate`) for the linked target in tests.
+
+**Dreamer as edge auditor**: `DreamMemoryUseCase.execute()` now supports two edge-related features:
+- `auto_link=True` — parses `LINK <src> -> <tgt> [type=<edge_type>]:` actions from the synthesis and calls `AddEdgeUseCase` for each valid proposal. Invalid edge types and unknown IDs are silently skipped. Report section: `## Auto-Applied Links`.
+- MERGE conflict guard (always active) — after synthesis, `_build_edge_index` reads edges from already-loaded entries (no extra repo calls). `_check_merge_conflicts` flags any MERGE proposal where a `contradicts` edge exists between the two IDs (both directions checked). Report section: `## ⚠ Merge Conflicts`.
+- The action format `_ACTION_FORMAT` lists `LINK` as a valid action alongside UPDATE/MERGE/DELETE/ADD. `_LINK_RE` uses `->` (ASCII arrow, more LLM-reliable than `→`).
+- Hook infrastructure was DRY-refactored into `ai_mem/_hook_deps.py` (`_build_core` + `_make_query_uc`); all three hooks delegate to it. Tests still mock `_build_deps`/`_build_query_use_case` at module level.

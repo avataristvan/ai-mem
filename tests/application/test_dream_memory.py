@@ -2,11 +2,18 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 from ai_mem.application.dream_memory import (
     _ADD_TARGET_RE,
     _TYPE_RULES,
+    _build_edge_index,
+    _check_merge_conflicts,
     _format_entries,
+    _parse_link_proposals,
     _propagation_candidates,
 )
 from ai_mem.domain.memory import MemoryEntry
@@ -169,3 +176,243 @@ class TestPropagationCandidates:
         synthesis = "- ADD entry_x [target=  global  ]: content"
         result = _propagation_candidates(synthesis, {"repo.ai-mem"})
         assert result == [("entry_x", "global")]
+
+
+# ── _build_edge_index ─────────────────────────────────────────────────────────
+
+class TestBuildEdgeIndex:
+    def _entry(self, id: str, edges: list[dict]) -> MemoryEntry:
+        raw = json.dumps(edges)
+        return MemoryEntry(id=id, text="t", metadata={"edges": raw, "_collection": "col"})
+
+    def test_extracts_edges_from_metadata(self):
+        e = self._entry("a", [{"target_id": "b", "edge_type": "contradicts"}])
+        index = _build_edge_index([e])
+        assert index == {("a", "b"): "contradicts"}
+
+    def test_multiple_edges_on_one_entry(self):
+        e = self._entry("a", [
+            {"target_id": "b", "edge_type": "contradicts"},
+            {"target_id": "c", "edge_type": "fixes"},
+        ])
+        index = _build_edge_index([e])
+        assert index[("a", "b")] == "contradicts"
+        assert index[("a", "c")] == "fixes"
+
+    def test_empty_edges_returns_empty_index(self):
+        e = self._entry("a", [])
+        assert _build_edge_index([e]) == {}
+
+    def test_missing_edges_key_returns_empty_index(self):
+        e = MemoryEntry(id="a", text="t", metadata={"_collection": "col"})
+        assert _build_edge_index([e]) == {}
+
+    def test_malformed_json_silently_skipped(self):
+        e = MemoryEntry(id="a", text="t", metadata={"edges": "not-json", "_collection": "col"})
+        assert _build_edge_index([e]) == {}
+
+    def test_multiple_entries_merged(self):
+        a = self._entry("a", [{"target_id": "b", "edge_type": "causes"}])
+        b = self._entry("b", [{"target_id": "c", "edge_type": "related"}])
+        index = _build_edge_index([a, b])
+        assert index == {("a", "b"): "causes", ("b", "c"): "related"}
+
+
+# ── _check_merge_conflicts ────────────────────────────────────────────────────
+
+class TestCheckMergeConflicts:
+    def test_flags_contradicts_edge(self):
+        index = {("a", "b"): "contradicts"}
+        warnings = _check_merge_conflicts("- MERGE a + b: combine", index)
+        assert len(warnings) == 1
+        assert "contradicts" in warnings[0]
+        assert "a" in warnings[0] and "b" in warnings[0]
+
+    def test_bidirectional_detection(self):
+        # Edge stored on b (b → a), but MERGE proposes a + b
+        index = {("b", "a"): "contradicts"}
+        warnings = _check_merge_conflicts("- MERGE a + b: combine", index)
+        assert len(warnings) == 1
+
+    def test_related_edge_does_not_block_merge(self):
+        index = {("a", "b"): "related"}
+        assert _check_merge_conflicts("- MERGE a + b: combine", index) == []
+
+    def test_no_merge_in_text_returns_empty(self):
+        index = {("a", "b"): "contradicts"}
+        assert _check_merge_conflicts("- DELETE a: stale", index) == []
+
+    def test_no_edge_returns_empty(self):
+        assert _check_merge_conflicts("- MERGE a + b: combine", {}) == []
+
+    def test_multiple_merges_only_flags_conflicting(self):
+        index = {("a", "b"): "contradicts"}
+        synthesis = "- MERGE a + b: combine\n- MERGE c + d: also combine"
+        warnings = _check_merge_conflicts(synthesis, index)
+        assert len(warnings) == 1
+        assert "a" in warnings[0] and "b" in warnings[0]
+
+
+# ── _parse_link_proposals ─────────────────────────────────────────────────────
+
+class TestParseLinkProposals:
+    def test_parses_dash_bullet(self):
+        result = _parse_link_proposals("- LINK src -> tgt [type=contradicts]: reason")
+        assert result == [("src", "tgt", "contradicts")]
+
+    def test_parses_star_bullet(self):
+        result = _parse_link_proposals("* LINK src -> tgt [type=fixes]: reason")
+        assert result == [("src", "tgt", "fixes")]
+
+    def test_parses_dot_bullet(self):
+        result = _parse_link_proposals("• LINK src -> tgt [type=related]: reason")
+        assert result == [("src", "tgt", "related")]
+
+    def test_case_insensitive(self):
+        result = _parse_link_proposals("- link src -> tgt [type=causes]: reason")
+        assert result == [("src", "tgt", "causes")]
+
+    def test_whitespace_in_type_stripped(self):
+        result = _parse_link_proposals("- LINK a -> b [type=  related  ]: reason")
+        assert result == [("a", "b", "related")]
+
+    def test_multiple_links(self):
+        synthesis = (
+            "- LINK a -> b [type=contradicts]: opposed\n"
+            "- LINK c -> d [type=fixes]: correction\n"
+        )
+        result = _parse_link_proposals(synthesis)
+        assert ("a", "b", "contradicts") in result
+        assert ("c", "d", "fixes") in result
+        assert len(result) == 2
+
+    def test_no_type_bracket_not_matched(self):
+        result = _parse_link_proposals("- LINK a -> b: no type here")
+        assert result == []
+
+    def test_empty_synthesis(self):
+        assert _parse_link_proposals("") == []
+
+
+# ── Integration: execute() with mocked _call ─────────────────────────────────
+
+def _seed(repo, collection: str, docs: dict[str, str], metadatas: list[dict] | None = None) -> None:
+    from ai_mem.application.add_memory import AddMemoryUseCase
+    metas = metadatas or [{}] * len(docs)
+    AddMemoryUseCase(repo).execute(
+        collection=collection,
+        documents=list(docs.values()),
+        ids=list(docs.keys()),
+        metadatas=metas,
+    )
+
+
+class TestDreamExecuteMergeConflict:
+    def test_merge_conflict_flagged_in_report(self, tmp_repo, tmp_path: Path):
+        from ai_mem.application.add_edge import AddEdgeUseCase
+        from ai_mem.application.dream_memory import DreamMemoryUseCase
+
+        _seed(tmp_repo, "col",
+              {"p1": "Rule: always validate\nWhen: input received\nWhy: safety",
+               "ap1": "Tried: skip validation\nFailed because: injection\nInstead: validate"},
+              [{"type": "pattern"}, {"type": "anti-pattern"}])
+        AddEdgeUseCase(tmp_repo).execute("col", "ap1", "p1", "contradicts")
+
+        dream_uc = DreamMemoryUseCase(tmp_repo)
+        synthesis = "- MERGE ap1 + p1: combine into unified guidance"
+
+        with patch("ai_mem.application.dream_memory._call", return_value=synthesis):
+            report = dream_uc.execute("col", mode="single-haiku")
+
+        assert "## ⚠ Merge Conflicts" in report
+        assert "contradicts" in report
+
+    def test_merge_without_contradicts_edge_not_flagged(self, tmp_repo, tmp_path: Path):
+        from ai_mem.application.dream_memory import DreamMemoryUseCase
+
+        _seed(tmp_repo, "col", {"e1": "entry one text", "e2": "entry two text"})
+
+        dream_uc = DreamMemoryUseCase(tmp_repo)
+        synthesis = "- MERGE e1 + e2: duplicate content"
+
+        with patch("ai_mem.application.dream_memory._call", return_value=synthesis):
+            report = dream_uc.execute("col", mode="single-haiku")
+
+        assert "## ⚠ Merge Conflicts" not in report
+
+    def test_bidirectional_edge_also_flagged(self, tmp_repo, tmp_path: Path):
+        from ai_mem.application.add_edge import AddEdgeUseCase
+        from ai_mem.application.dream_memory import DreamMemoryUseCase
+
+        _seed(tmp_repo, "col", {"p1": "pattern text", "ap1": "anti-pattern text"})
+        # Edge stored on p1 pointing to ap1 (reverse of MERGE order)
+        AddEdgeUseCase(tmp_repo).execute("col", "p1", "ap1", "contradicts")
+
+        dream_uc = DreamMemoryUseCase(tmp_repo)
+        synthesis = "- MERGE ap1 + p1: combine"
+
+        with patch("ai_mem.application.dream_memory._call", return_value=synthesis):
+            report = dream_uc.execute("col", mode="single-haiku")
+
+        assert "## ⚠ Merge Conflicts" in report
+
+
+class TestDreamExecuteAutoLink:
+    def test_auto_link_creates_edge(self, tmp_repo, tmp_path: Path):
+        from ai_mem.application.dream_memory import DreamMemoryUseCase
+        from ai_mem.application.get_edges import GetEdgesUseCase
+
+        _seed(tmp_repo, "col", {"e1": "pattern text here", "e2": "anti-pattern text here"})
+
+        dream_uc = DreamMemoryUseCase(tmp_repo)
+        synthesis = "- LINK e1 -> e2 [type=related]: they are connected"
+
+        with patch("ai_mem.application.dream_memory._call", return_value=synthesis):
+            report = dream_uc.execute("col", mode="single-haiku", auto_link=True)
+
+        assert "Auto-Applied Links" in report
+        edges = GetEdgesUseCase(tmp_repo).execute("col", "e1")
+        assert any(e.target_id == "e2" and e.edge_type == "related" for e in edges)
+
+    def test_auto_link_not_applied_when_flag_false(self, tmp_repo, tmp_path: Path):
+        from ai_mem.application.dream_memory import DreamMemoryUseCase
+        from ai_mem.application.get_edges import GetEdgesUseCase
+
+        _seed(tmp_repo, "col", {"e1": "text", "e2": "text"})
+
+        dream_uc = DreamMemoryUseCase(tmp_repo)
+        synthesis = "- LINK e1 -> e2 [type=related]: connected"
+
+        with patch("ai_mem.application.dream_memory._call", return_value=synthesis):
+            report = dream_uc.execute("col", mode="single-haiku", auto_link=False)
+
+        assert "Auto-Applied Links" not in report
+        assert GetEdgesUseCase(tmp_repo).execute("col", "e1") == []
+
+    def test_auto_link_skips_nonexistent_source(self, tmp_repo, tmp_path: Path):
+        from ai_mem.application.dream_memory import DreamMemoryUseCase
+
+        _seed(tmp_repo, "col", {"e2": "target text"})
+
+        dream_uc = DreamMemoryUseCase(tmp_repo)
+        synthesis = "- LINK ghost -> e2 [type=related]: ghost does not exist"
+
+        with patch("ai_mem.application.dream_memory._call", return_value=synthesis):
+            report = dream_uc.execute("col", mode="single-haiku", auto_link=True)
+
+        # Must not crash; no link entry for ghost
+        assert "ghost" not in report or "Auto-Applied Links" not in report
+
+    def test_auto_link_skips_invalid_edge_type(self, tmp_repo, tmp_path: Path):
+        from ai_mem.application.dream_memory import DreamMemoryUseCase
+        from ai_mem.application.get_edges import GetEdgesUseCase
+
+        _seed(tmp_repo, "col", {"e1": "text", "e2": "text"})
+
+        dream_uc = DreamMemoryUseCase(tmp_repo)
+        synthesis = "- LINK e1 -> e2 [type=invalid_type]: wrong type"
+
+        with patch("ai_mem.application.dream_memory._call", return_value=synthesis):
+            report = dream_uc.execute("col", mode="single-haiku", auto_link=True)
+
+        assert GetEdgesUseCase(tmp_repo).execute("col", "e1") == []

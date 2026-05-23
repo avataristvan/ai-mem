@@ -13,6 +13,16 @@ _ADD_TARGET_RE = re.compile(
     r"^\s*[-*•]\s+ADD\s+(\S+)\s+\[target=([^\]]+)\]\s*:",
     re.MULTILINE | re.IGNORECASE,
 )
+_MERGE_RE = re.compile(
+    r"^\s*[-*•]\s+MERGE\s+(\S+)\s*\+\s*(\S+)\s*:",
+    re.MULTILINE | re.IGNORECASE,
+)
+_LINK_RE = re.compile(
+    r"^\s*[-*•]\s+LINK\s+(\S+)\s*->\s*(\S+)\s+\[type=([^\]]+)\]\s*:",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+_VALID_EDGE_TYPES = frozenset({"contradicts", "fixes", "causes", "related"})
 
 MODELS = {
     "haiku": "claude-haiku-4-5-20251001",
@@ -33,7 +43,9 @@ If they share an edge (shown in metadata), verify the relationship is accurate �
 - Entries with access_count ≥ 5 are load-bearing (frequently retrieved). \
 Avoid DELETE or MERGE unless clearly redundant.
 - If two entries share an edge, the edge makes both necessary. \
-Verify the relationship before proposing structural changes."""
+Verify the relationship before proposing structural changes.
+- If two related entries have no edge yet, propose LINK to document \
+the relationship explicitly instead of leaving it implicit."""
 
 _COLLECTION_CONTEXT = """\
 COLLECTIONS PRESENT:
@@ -51,11 +63,17 @@ Format each action as:
 - MERGE <id1> + <id2>: <into what>
 - DELETE <id>: <reason>
 - ADD <suggested-id> [target=<collection>]: <content summary>
+- LINK <source-id> -> <target-id> [type=<edge_type>]: <reason>
+  (edge_type: contradicts | fixes | causes | related)
 
 For ADD, set target= to the collection where the entry belongs:
   - Same collection as the source entry if it is project-specific.
   - A higher-level collection (workspace or global) if the pattern applies broadly \
-across multiple projects — this flags it as a propagation candidate."""
+across multiple projects — this flags it as a propagation candidate.
+
+For LINK: use when two entries are related but must stay separate \
+(e.g. an anti-pattern contradicting a pattern, a fix addressing a cause). \
+Prefer LINK over MERGE when entries have different types or already share an edge."""
 
 _P_SINGLE = """\
 You are a memory consolidation agent. The memories below come from AI assistant sessions \
@@ -148,6 +166,42 @@ REBUTTAL:
 {c}"""
 
 
+def _build_edge_index(entries: list[MemoryEntry]) -> dict[tuple[str, str], str]:
+    """Return {(source_id, target_id): edge_type} from loaded entries' metadata."""
+    index: dict[tuple[str, str], str] = {}
+    for entry in entries:
+        raw = entry.metadata.get("edges", "[]")
+        try:
+            for ed in json.loads(raw):
+                index[(entry.id, ed["target_id"])] = ed["edge_type"]
+        except (json.JSONDecodeError, KeyError, TypeError):
+            pass
+    return index
+
+
+def _check_merge_conflicts(
+    synthesis: str, edge_index: dict[tuple[str, str], str]
+) -> list[str]:
+    """Return warning strings for MERGE proposals that conflict with a contradicts edge."""
+    warnings = []
+    for m in _MERGE_RE.finditer(synthesis):
+        a, b = m.group(1), m.group(2)
+        if edge_index.get((a, b)) == "contradicts" or edge_index.get((b, a)) == "contradicts":
+            warnings.append(
+                f"⚠ MERGE {a} + {b} conflicts with an existing `contradicts` edge — "
+                f"use LINK to document the relationship instead."
+            )
+    return warnings
+
+
+def _parse_link_proposals(synthesis: str) -> list[tuple[str, str, str]]:
+    """Return (source_id, target_id, edge_type) for each LINK proposal in synthesis."""
+    return [
+        (m.group(1), m.group(2), m.group(3).strip())
+        for m in _LINK_RE.finditer(synthesis)
+    ]
+
+
 def _format_entries(entries: list[MemoryEntry]) -> str:
     parts = []
     for e in entries:
@@ -206,6 +260,7 @@ class DreamMemoryUseCase:
         collection: str | None,
         mode: str,
         auto_delete: bool = False,
+        auto_link: bool = False,
         focus_hint: str | None = None,
     ) -> str:
         if mode not in MODES:
@@ -241,6 +296,11 @@ class DreamMemoryUseCase:
         else:
             synthesis, report = self._run_team(ts, memories, col_ctx)
 
+        edge_index = _build_edge_index(all_entries)
+        conflicts = _check_merge_conflicts(synthesis, edge_index)
+        if conflicts:
+            report += "\n\n---\n\n## ⚠ Merge Conflicts\n\n" + "\n".join(conflicts)
+
         propagation = _propagation_candidates(synthesis, set(collections))
         if propagation:
             lines = "\n".join(f"- `{eid}` → **{target}**" for eid, target in propagation)
@@ -249,6 +309,13 @@ class DreamMemoryUseCase:
                 "These ADD proposals target a higher-level collection "
                 "(review and apply with `mem_add` if confirmed):\n\n" + lines
             )
+
+        if auto_link:
+            linked = self._auto_apply_links(synthesis, all_entries)
+            if linked:
+                report += "\n\n---\n\n## Auto-Applied Links\n\n" + "\n".join(
+                    f"- Linked `{l}`" for l in linked
+                )
 
         if auto_delete:
             deleted = self._auto_apply_deletes(synthesis, all_entries)
@@ -312,3 +379,22 @@ class DreamMemoryUseCase:
             except Exception:
                 pass
         return deleted
+
+    def _auto_apply_links(self, synthesis: str, all_entries: list[MemoryEntry]) -> list[str]:
+        """Parse LINK proposals from synthesis and apply them as edges."""
+        from ai_mem.application.add_edge import AddEdgeUseCase
+
+        id_to_col = {e.id: e.metadata["_collection"] for e in all_entries}
+        applied = []
+        for source_id, target_id, edge_type in _parse_link_proposals(synthesis):
+            if edge_type not in _VALID_EDGE_TYPES:
+                continue
+            col = id_to_col.get(source_id)
+            if col is None:
+                continue
+            try:
+                AddEdgeUseCase(self._repo).execute(col, source_id, target_id, edge_type)  # type: ignore[arg-type]
+                applied.append(f"{source_id} -> {target_id} [{edge_type}]")
+            except Exception:
+                pass
+        return applied
