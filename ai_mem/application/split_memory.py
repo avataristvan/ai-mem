@@ -11,6 +11,7 @@ from ai_mem.application.detect_split_hints import SPLIT_MIN_TEXT_CHARS, SPLIT_TH
 from ai_mem.domain.memory import MemoryEntry, MemoryRepository
 
 _MODEL = "claude-haiku-4-5-20251001"
+_SKIP_REASON_MAX = 200  # truncation limit for CalledProcessError messages
 
 _SPLIT_PROMPT = """\
 Split the following memory entry into 2-3 focused sub-entries, each covering a distinct sub-topic.
@@ -74,7 +75,7 @@ class SplitMemoryUseCase:
             return SplitResult(
                 original_id=entry.id,
                 skipped=True,
-                skip_reason=f"claude CLI error (exit {exc.returncode}): {exc.stderr.strip()[:200]}",
+                skip_reason=f"claude CLI error (exit {exc.returncode}): {exc.stderr.strip()[:_SKIP_REASON_MAX]}",
             )
         except FileNotFoundError:
             return SplitResult(

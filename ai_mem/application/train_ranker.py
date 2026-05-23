@@ -16,6 +16,7 @@ from ai_mem.domain.learning import (
 from ai_mem.domain.memory import MemoryRepository, QueryResult
 
 _LABEL_EPSILON = 1.0  # seconds — avoids labeling the recording tick itself
+_SECONDS_PER_DAY = 86400
 
 _DEFAULT_SCOPE_RESOLVER: Callable[[str], RankerScope] = lambda c: RankerScope(name=c, mode="isolated")
 
@@ -87,7 +88,7 @@ class TrainRankerUseCase:
                 if ex.memory_id in explicit_labels:
                     ex.target_future_access = explicit_labels[ex.memory_id]
 
-        label_cutoff = self._label_window_days * 86400
+        label_cutoff = self._label_window_days * _SECONDS_PER_DAY
 
         # Group unlabeled-past-window examples by their source collection so we
         # fetch labels from the correct collection even in hybrid mode.

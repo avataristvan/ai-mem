@@ -11,33 +11,9 @@ MAX_CHARS_PER_HIT = 500
 
 
 def _build_query_use_case():
-    from ai_mem.application.build_features import BuildFeaturesUseCase
-    from ai_mem.application.load_ranker_config import LoadRankerConfigUseCase
-    from ai_mem.application.query_memory import QueryMemoryUseCase
-    from ai_mem.application.ranker_registry import RankerRegistry
-    from ai_mem.application.track_access import TrackAccessUseCase
-    from ai_mem.application.train_ranker import TrainRankerUseCase
-    from ai_mem.domain.learning import RankerScope
-    from ai_mem.infrastructure.chroma_repository import ChromaMemoryRepository
-    from ai_mem.infrastructure.ranker_storage import RankerStorage
+    from ai_mem._hook_deps import _build_core, _make_query_uc
 
-    try:
-        from ai_mem.infrastructure.torch_ranker import TorchMicroRanker as RankerClass
-    except ImportError:
-        from ai_mem.infrastructure.null_ranker import NullRanker as RankerClass  # type: ignore[assignment]
-
-    repo = ChromaMemoryRepository(DB_PATH)
-    storage = RankerStorage(DB_PATH / "rankers")
-    scope_map = LoadRankerConfigUseCase(DB_PATH / "ranker_config.json").execute()
-    scope_resolver = lambda c: scope_map.get(c, RankerScope(name=c, mode="isolated"))
-    registry = RankerRegistry(scope_resolver=scope_resolver, ranker_factory=RankerClass, storage=storage)
-    return QueryMemoryUseCase(
-        repo,
-        TrackAccessUseCase(repo),
-        BuildFeaturesUseCase(),
-        TrainRankerUseCase(repo, storage, RankerClass, scope_resolver=scope_resolver),
-        registry,
-    )
+    return _make_query_uc(*_build_core(DB_PATH))
 
 
 def _hits(query_uc, collection: str, query: str):

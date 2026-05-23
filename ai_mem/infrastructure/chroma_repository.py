@@ -37,6 +37,13 @@ class ChromaMemoryRepository:
     def _col(self, name: str):
         return self._client.get_or_create_collection(name)
 
+    def _safe_get_collection(self, name: str):
+        """Return the named collection, or None if it does not exist."""
+        try:
+            return self._client.get_collection(name)
+        except Exception:
+            return None
+
     def upsert(self, collection: str, entries: list[MemoryEntry]) -> None:
         col = self._col(collection)
         col.upsert(
@@ -93,9 +100,8 @@ class ChromaMemoryRepository:
         ]
 
     def get_by_ids(self, collection: str, ids: list[str]) -> list[MemoryEntry]:
-        try:
-            col = self._client.get_collection(collection)
-        except Exception:
+        col = self._safe_get_collection(collection)
+        if col is None:
             return []
 
         result = col.get(ids=ids)
@@ -120,9 +126,8 @@ class ChromaMemoryRepository:
         return -1  # whole collection dropped
 
     def delete_expired(self, collection: str) -> int:
-        try:
-            col = self._client.get_collection(collection)
-        except Exception:
+        col = self._safe_get_collection(collection)
+        if col is None:
             return 0
 
         now_ts = datetime.now(tz=timezone.utc).timestamp()
@@ -135,9 +140,8 @@ class ChromaMemoryRepository:
     def record_access(self, collection: str, ids: list[str]) -> None:
         if not ids:
             return
-        try:
-            col = self._client.get_collection(collection)
-        except Exception:
+        col = self._safe_get_collection(collection)
+        if col is None:
             return
 
         existing = col.get(ids=ids)
@@ -157,9 +161,8 @@ class ChromaMemoryRepository:
         col.update(ids=existing_ids, metadatas=new_metas)
 
     def get_all(self, collection: str) -> list[MemoryEntry]:
-        try:
-            col = self._client.get_collection(collection)
-        except Exception:
+        col = self._safe_get_collection(collection)
+        if col is None:
             return []
         result = col.get()
         ids = result.get("ids") or []
@@ -171,9 +174,8 @@ class ChromaMemoryRepository:
         ]
 
     def delete_stale(self, collection: str, stale_after_days: float) -> int:
-        try:
-            col = self._client.get_collection(collection)
-        except Exception:
+        col = self._safe_get_collection(collection)
+        if col is None:
             return 0
 
         cutoff = datetime.now(tz=timezone.utc).timestamp() - stale_after_days * 86400
@@ -184,9 +186,8 @@ class ChromaMemoryRepository:
         return len(ids)
 
     def add_edge(self, collection: str, source_id: str, edge: MemoryEdge) -> None:
-        try:
-            col = self._client.get_collection(collection)
-        except Exception:
+        col = self._safe_get_collection(collection)
+        if col is None:
             return
 
         result = col.get(ids=[source_id])
@@ -208,9 +209,8 @@ class ChromaMemoryRepository:
         col.update(ids=[source_id], metadatas=[existing_meta])
 
     def get_edges(self, collection: str, entry_id: str) -> list[MemoryEdge]:
-        try:
-            col = self._client.get_collection(collection)
-        except Exception:
+        col = self._safe_get_collection(collection)
+        if col is None:
             return []
 
         result = col.get(ids=[entry_id])

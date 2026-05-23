@@ -6,7 +6,7 @@ import re
 import subprocess
 from datetime import datetime
 
-from ai_mem.domain.memory import MemoryRepository
+from ai_mem.domain.memory import MemoryEntry, MemoryRepository
 
 _DELETE_RE = re.compile(r"^\s*[-*•]\s+DELETE\s+(\S+)\s*:", re.MULTILINE | re.IGNORECASE)
 _ADD_TARGET_RE = re.compile(
@@ -148,7 +148,7 @@ REBUTTAL:
 {c}"""
 
 
-def _format_entries(entries) -> str:
+def _format_entries(entries: list[MemoryEntry]) -> str:
     parts = []
     for e in entries:
         col = e.metadata.get("_collection", "?")
@@ -162,7 +162,7 @@ def _format_entries(entries) -> str:
                 edges = json.loads(raw_edges)
                 if edges:
                     shown["edges"] = [f"{ed['target_id']}({ed['edge_type']})" for ed in edges]
-            except Exception:
+            except (json.JSONDecodeError, KeyError, TypeError):
                 pass
         meta_str = (
             " [" + ", ".join(f"{k}={v}" for k, v in shown.items()) + "]"
@@ -230,62 +230,20 @@ class DreamMemoryUseCase:
         preamble_parts = [_TYPE_RULES]
         if focus_hint:
             preamble_parts.append(f"FOCUS:\n{focus_hint}")
-        preamble = "\n\n".join(preamble_parts)
-
-        raw_memories = _format_entries(all_entries)
-        memories = preamble + "\n\n---\n\n" + raw_memories
+        memories = "\n\n".join(preamble_parts) + "\n\n---\n\n" + _format_entries(all_entries)
         col_ctx = _collection_context(collections)
         ts = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-        if mode == "single-haiku":
-            result = _call("haiku", _P_SINGLE.format(
-                memories=memories, collection_context=col_ctx, action_format=_ACTION_FORMAT,
-            ))
-            synthesis = result
-            report = f"# Dream Log — {ts} — single:haiku\n\n{result}"
-
-        elif mode == "single-sonnet":
-            result = _call("sonnet", _P_SINGLE.format(
-                memories=memories, collection_context=col_ctx, action_format=_ACTION_FORMAT,
-            ))
-            synthesis = result
-            report = f"# Dream Log — {ts} — single:sonnet\n\n{result}"
-
+        if mode in ("single-haiku", "single-sonnet"):
+            synthesis, report = self._run_single(mode.split("-", 1)[1], ts, memories, col_ctx)
         elif mode == "hier":
-            a = _call("haiku", _P_HAIKU.format(memories=memories, collection_context=col_ctx))
-            b = _call("sonnet", _P_SONNET_HIER.format(
-                memories=memories, collection_context=col_ctx, action_format=_ACTION_FORMAT, a=a,
-            ))
-            synthesis = b
-            report = (
-                f"# Dream Log — {ts} — hier\n\n"
-                f"## Haiku: First Pass\n\n{a}\n\n---\n\n"
-                f"## Sonnet: Synthesis\n\n{b}"
-            )
-
-        else:  # team
-            a = _call("haiku", _P_HAIKU.format(memories=memories, collection_context=col_ctx))
-            b = _call("sonnet", _P_SONNET_CRITIQUE.format(
-                memories=memories, collection_context=col_ctx, a=a,
-            ))
-            c = _call("haiku", _P_HAIKU_REBUTTAL.format(a=a, b=b))
-            d = _call("sonnet", _P_SONNET_FINAL.format(
-                collection_context=col_ctx, action_format=_ACTION_FORMAT, a=a, b=b, c=c,
-            ))
-            synthesis = d
-            report = (
-                f"# Dream Log — {ts} — team\n\n"
-                f"## Haiku: Initial Analysis\n\n{a}\n\n---\n\n"
-                f"## Sonnet: Critique\n\n{b}\n\n---\n\n"
-                f"## Haiku: Rebuttal\n\n{c}\n\n---\n\n"
-                f"## Sonnet: Final Synthesis\n\n{d}"
-            )
+            synthesis, report = self._run_hier(ts, memories, col_ctx)
+        else:
+            synthesis, report = self._run_team(ts, memories, col_ctx)
 
         propagation = _propagation_candidates(synthesis, set(collections))
         if propagation:
-            lines = "\n".join(
-                f"- `{eid}` → **{target}**" for eid, target in propagation
-            )
+            lines = "\n".join(f"- `{eid}` → **{target}**" for eid, target in propagation)
             report += (
                 "\n\n---\n\n## Propagation Candidates\n\n"
                 "These ADD proposals target a higher-level collection "
@@ -303,7 +261,43 @@ class DreamMemoryUseCase:
 
         return report
 
-    def _auto_apply_deletes(self, synthesis: str, all_entries) -> list[str]:
+    def _run_single(self, model_key: str, ts: str, memories: str, col_ctx: str) -> tuple[str, str]:
+        result = _call(model_key, _P_SINGLE.format(
+            memories=memories, collection_context=col_ctx, action_format=_ACTION_FORMAT,
+        ))
+        return result, f"# Dream Log — {ts} — single:{model_key}\n\n{result}"
+
+    def _run_hier(self, ts: str, memories: str, col_ctx: str) -> tuple[str, str]:
+        a = _call("haiku", _P_HAIKU.format(memories=memories, collection_context=col_ctx))
+        b = _call("sonnet", _P_SONNET_HIER.format(
+            memories=memories, collection_context=col_ctx, action_format=_ACTION_FORMAT, a=a,
+        ))
+        report = (
+            f"# Dream Log — {ts} — hier\n\n"
+            f"## Haiku: First Pass\n\n{a}\n\n---\n\n"
+            f"## Sonnet: Synthesis\n\n{b}"
+        )
+        return b, report
+
+    def _run_team(self, ts: str, memories: str, col_ctx: str) -> tuple[str, str]:
+        a = _call("haiku", _P_HAIKU.format(memories=memories, collection_context=col_ctx))
+        b = _call("sonnet", _P_SONNET_CRITIQUE.format(
+            memories=memories, collection_context=col_ctx, a=a,
+        ))
+        c = _call("haiku", _P_HAIKU_REBUTTAL.format(a=a, b=b))
+        d = _call("sonnet", _P_SONNET_FINAL.format(
+            collection_context=col_ctx, action_format=_ACTION_FORMAT, a=a, b=b, c=c,
+        ))
+        report = (
+            f"# Dream Log — {ts} — team\n\n"
+            f"## Haiku: Initial Analysis\n\n{a}\n\n---\n\n"
+            f"## Sonnet: Critique\n\n{b}\n\n---\n\n"
+            f"## Haiku: Rebuttal\n\n{c}\n\n---\n\n"
+            f"## Sonnet: Final Synthesis\n\n{d}"
+        )
+        return d, report
+
+    def _auto_apply_deletes(self, synthesis: str, all_entries: list[MemoryEntry]) -> list[str]:
         """Parse DELETE <id>: lines from synthesis and delete matching entries."""
         id_to_col = {e.id: e.metadata["_collection"] for e in all_entries}
         found_ids = _DELETE_RE.findall(synthesis)
