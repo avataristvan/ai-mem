@@ -84,6 +84,49 @@ def test_query_increments_access_count(tmp_repo, track_access, tmp_path):
     assert fetched[0].metadata["last_accessed_at"] >= fetched[0].metadata["created_at"]
 
 
+def test_min_score_for_tracking_suppresses_weak_matches(tmp_repo, track_access, tmp_path):
+    """Entries below min_score_for_tracking must not have last_accessed_at updated."""
+    AddMemoryUseCase(tmp_repo).execute(
+        collection="test_col",
+        documents=["the cat sat on the mat"],
+        ids=["a"],
+    )
+    get_uc = GetMemoryUseCase(tmp_repo)
+    created_at = get_uc.execute("test_col", ["a"])[0].metadata["created_at"]
+
+    # Query with an impossibly high threshold — no real result will score ≥ 1.0
+    _make_query_uc(tmp_repo, track_access, tmp_path).execute(
+        collection="test_col",
+        query="cat",
+        n_results=1,
+        min_score_for_tracking=1.0,
+    )
+
+    fetched = get_uc.execute("test_col", ["a"])[0]
+    # Access was NOT tracked: last_accessed_at still equals created_at
+    assert fetched.metadata.get("access_count", 0) == 0
+    assert fetched.metadata.get("last_accessed_at", created_at) == created_at
+
+
+def test_min_score_for_tracking_allows_strong_matches(tmp_repo, track_access, tmp_path):
+    """Entries at or above min_score_for_tracking DO get last_accessed_at updated."""
+    AddMemoryUseCase(tmp_repo).execute(
+        collection="test_col",
+        documents=["the cat sat on the mat"],
+        ids=["a"],
+    )
+    # Threshold of 0.0 allows everything through
+    _make_query_uc(tmp_repo, track_access, tmp_path).execute(
+        collection="test_col",
+        query="cat",
+        n_results=1,
+        min_score_for_tracking=0.0,
+    )
+
+    fetched = GetMemoryUseCase(tmp_repo).execute("test_col", ["a"])[0]
+    assert fetched.metadata.get("access_count", 0) == 1
+
+
 def test_null_ranker_session_hit_penalty():
     from ai_mem.domain.learning import RankingFeatures
     ranker = NullRanker()

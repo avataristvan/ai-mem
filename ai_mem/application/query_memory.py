@@ -36,6 +36,7 @@ class QueryMemoryUseCase:
         n_results: int = 5,
         max_age_days: float | None = None,
         type_filter: str | None = None,
+        min_score_for_tracking: float | None = None,
     ) -> list[QueryResult]:
         now = time.time()
         candidates = self._repo.query(collection, query, _FETCH_K, max_age_days, type_filter)
@@ -61,8 +62,17 @@ class QueryMemoryUseCase:
 
         returned_ids = {r.id for r in results}
         self._session_hits[collection].update(returned_ids)
-        self._track_access.execute(collection, list(returned_ids))
-        self._train_ranker.record_query(collection, candidates, features, now, returned_ids=returned_ids)
+
+        # When a score threshold is set, only track entries that are a strong enough
+        # semantic match. Weak path-based matches (posttool_hook) would otherwise
+        # receive immediate 1.0 labels despite being unrelated to the actual task.
+        tracked_ids = (
+            {r.id for r in results if r.score >= min_score_for_tracking}
+            if min_score_for_tracking is not None
+            else returned_ids
+        )
+        self._track_access.execute(collection, list(tracked_ids))
+        self._train_ranker.record_query(collection, candidates, features, now, returned_ids=tracked_ids)
 
         results = self._append_linked(collection, results, returned_ids)
         return results

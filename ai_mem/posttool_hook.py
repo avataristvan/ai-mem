@@ -18,6 +18,10 @@ from ai_mem.repo_context import GLOBAL_COLLECTION, WORKSPACE_COLLECTION, detect_
 
 DB_PATH = Path(os.environ.get("AI_MEM_PATH", Path.home() / ".local" / "share" / "ai-mem"))
 _QUERY_K = 5  # enough candidates to surface relevant entries; no injection needed
+# Only propagate a positive label when the file-path query hits a semantically strong
+# match. Weak matches (score < threshold) stay unlabeled — they rely on the 7-day
+# access window instead of getting an immediate 1.0 label they may not deserve.
+_MIN_LABEL_SCORE = 0.50
 
 
 def _build_deps():
@@ -33,7 +37,12 @@ def _build_deps():
 def _signal_collection(query_uc, train_uc, collection: str, query: str, now: float) -> None:
     """Query a collection (updating last_accessed_at) then run a train_step."""
     try:
-        query_uc.execute(collection=collection, query=query, n_results=_QUERY_K)
+        query_uc.execute(
+            collection=collection,
+            query=query,
+            n_results=_QUERY_K,
+            min_score_for_tracking=_MIN_LABEL_SCORE,
+        )
     except Exception:
         return
     try:
