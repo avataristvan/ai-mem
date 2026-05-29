@@ -129,19 +129,42 @@ def test_min_score_for_tracking_allows_strong_matches(tmp_repo, track_access, tm
 
 def test_null_ranker_session_hit_penalty():
     from ai_mem.domain.learning import RankingFeatures
+    from ai_mem.infrastructure.null_ranker import (
+        _EXPLORE_BONUS, _SESSION_HIT_PENALTY, _SESSION_HIT_SATURATION,
+        _session_hit_multiplier,
+    )
     ranker = NullRanker()
-    features = [
-        RankingFeatures(
-            cosine_similarity=0.9, age_days=0, last_access_days=0,
-            access_count=10, session_hit=True,
-        ),
-        RankingFeatures(
-            cosine_similarity=0.85, age_days=0, last_access_days=0,
-            access_count=0, session_hit=False,
-        ),
-    ]
-    from ai_mem.infrastructure.null_ranker import _SESSION_HIT_PENALTY, _EXPLORE_BONUS
-    scores = ranker.rank(features)
-    assert abs(scores[0] - (0.9 * _SESSION_HIT_PENALTY + _EXPLORE_BONUS / math.sqrt(10))) < 1e-6
-    assert abs(scores[1] - (0.85 + _EXPLORE_BONUS)) < 1e-6
+
+    # Low-access entry (new): full penalty applied
+    low_access = RankingFeatures(
+        cosine_similarity=0.9, age_days=0, last_access_days=0,
+        access_count=0, session_hit=True,
+    )
+    # High-access entry (load-bearing): penalty fully lifted
+    high_access = RankingFeatures(
+        cosine_similarity=0.9, age_days=0, last_access_days=0,
+        access_count=_SESSION_HIT_SATURATION, session_hit=True,
+    )
+    # No session hit: no penalty
+    no_hit = RankingFeatures(
+        cosine_similarity=0.85, age_days=0, last_access_days=0,
+        access_count=0, session_hit=False,
+    )
+
+    scores = ranker.rank([low_access, high_access, no_hit])
+
+    # Low-access: full _SESSION_HIT_PENALTY
+    expected_low = 0.9 * _SESSION_HIT_PENALTY + _EXPLORE_BONUS
+    assert abs(scores[0] - expected_low) < 1e-6
+
+    # High-access: multiplier == 1.0 (no penalty)
+    assert _session_hit_multiplier(_SESSION_HIT_SATURATION) == 1.0
+    expected_high = 0.9 * 1.0 + _EXPLORE_BONUS / math.sqrt(_SESSION_HIT_SATURATION)
+    assert abs(scores[1] - expected_high) < 1e-6
+
+    # High-access session hit scores higher than low-access session hit
     assert scores[1] > scores[0]
+
+    # No-hit scores without penalty
+    expected_no_hit = 0.85 + _EXPLORE_BONUS
+    assert abs(scores[2] - expected_no_hit) < 1e-6
