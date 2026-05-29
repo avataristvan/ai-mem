@@ -1,15 +1,15 @@
 """Tests for agent_context.py — subagent detection and hook routing."""
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
 from ai_mem import agent_context as ctx_mod
 from ai_mem.agent_context import (
     AgentContext,
+    _BUILTIN_SIGNATURES,
+    _BUILTIN_INJECT_AGENTS,
     detect_for_hook,
     detect_for_session_start,
     write_to_env_file,
@@ -29,6 +29,27 @@ def _transcript(content: str, tmp_path: Path) -> str:
 def _clean_env(monkeypatch):
     monkeypatch.delenv("AI_MEM_HOOK_DEPTH", raising=False)
     monkeypatch.delenv("AI_MEM_AGENT_TYPE", raising=False)
+
+
+@pytest.fixture
+def with_custom_agent(monkeypatch):
+    """Simulate a user config that registers 'the-coder' as a custom inject agent.
+
+    Tests for the detection/injection mechanism use this fixture to keep
+    'the-coder' out of the built-in defaults (it's a private agent, not a
+    standard Claude Code agent).
+    """
+    monkeypatch.setattr(
+        ctx_mod,
+        "_SIGNATURES",
+        [("the-coder", ["chunk-first delivery", "capability-centric DDD"]),
+         *_BUILTIN_SIGNATURES],
+    )
+    monkeypatch.setattr(
+        ctx_mod,
+        "INJECT_CONTEXT_AGENTS",
+        _BUILTIN_INJECT_AGENTS | frozenset({"the-coder"}),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +72,7 @@ class TestDetectForSessionStart:
         assert result.is_subagent is False
         assert result.should_inject is True
 
-    def test_d1_the_coder(self, monkeypatch, tmp_path):
+    def test_d1_the_coder(self, monkeypatch, tmp_path, with_custom_agent):
         _clean_env(monkeypatch)
         monkeypatch.setenv("AI_MEM_HOOK_DEPTH", "0")  # inherited from d=0
         t = _transcript(
@@ -81,7 +102,7 @@ class TestDetectForSessionStart:
         assert result.agent_type is None
         assert result.should_inject is False  # unknown subagent → skip
 
-    def test_d2_inherits_increments(self, monkeypatch, tmp_path):
+    def test_d2_inherits_increments(self, monkeypatch, tmp_path, with_custom_agent):
         _clean_env(monkeypatch)
         monkeypatch.setenv("AI_MEM_HOOK_DEPTH", "1")  # inherited from d=1
         t = _transcript("chunk-first delivery capability-centric DDD", tmp_path)
@@ -128,7 +149,7 @@ class TestDetectForHook:
         assert result.depth == 0
         assert result.should_inject is True
 
-    def test_fast_path_inject_agent(self, monkeypatch):
+    def test_fast_path_inject_agent(self, monkeypatch, with_custom_agent):
         _clean_env(monkeypatch)
         monkeypatch.setenv("AI_MEM_HOOK_DEPTH", "1")
         monkeypatch.setenv("AI_MEM_AGENT_TYPE", "the-coder")
@@ -164,7 +185,7 @@ class TestDetectForHook:
         assert result.depth == 0
         assert result.should_inject is True
 
-    def test_fast_path_skips_transcript_io(self, monkeypatch):
+    def test_fast_path_skips_transcript_io(self, monkeypatch, with_custom_agent):
         """Fast path must not read transcript_path at all."""
         _clean_env(monkeypatch)
         monkeypatch.setenv("AI_MEM_HOOK_DEPTH", "1")

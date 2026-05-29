@@ -7,17 +7,27 @@ decide whether to inject ai-mem context.
 Two entry points:
 - detect_for_session_start() — called from SessionStart; parses transcript.
 - detect_for_hook()          — called from other hooks; uses env set by SessionStart.
+
+Custom agents are registered via ~/.config/ai-mem/agents.yaml (XDG_CONFIG_HOME).
+See agents.yaml.example in the repo root for the schema.
 """
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-INJECT_CONTEXT_AGENTS: frozenset[str] = frozenset({"the-coder", "general-purpose"})
+# XDG-aware config path
+_CONFIG_PATH = (
+    Path(os.environ.get("XDG_CONFIG_HOME") or "~/.config").expanduser()
+    / "ai-mem"
+    / "agents.yaml"
+)
 
-_SIGNATURES: list[tuple[str, list[str]]] = [
-    ("the-coder",             ["chunk-first delivery", "capability-centric DDD"]),
+# Built-in signatures for standard Claude Code / FleetView agents.
+# Add your own via ~/.config/ai-mem/agents.yaml — do not edit this list.
+_BUILTIN_SIGNATURES: list[tuple[str, list[str]]] = [
     ("general-purpose",       ["General-purpose agent for researching"]),
     ("Explore",               ["Fast read-only search agent"]),
     ("Plan",                  ["Software architect agent for designing"]),
@@ -31,6 +41,42 @@ _SIGNATURES: list[tuple[str, list[str]]] = [
     ("skill-reviewer",        ["skill quality"]),
     ("plugin-validator",      ["plugin structure", "plugin.json"]),
 ]
+
+# Built-in inject agents: subagents that always receive ai-mem context.
+_BUILTIN_INJECT_AGENTS: frozenset[str] = frozenset({"general-purpose"})
+
+
+def _load_user_config(
+    path: Path = _CONFIG_PATH,
+) -> tuple[list[tuple[str, list[str]]], frozenset[str]]:
+    """Load user-defined agent signatures and inject list from YAML config.
+
+    Returns empty defaults when the file is absent, unreadable, or pyyaml is
+    not installed — config is always optional.
+    """
+    try:
+        import yaml  # pyyaml; optional dep
+        data: dict[str, Any] = yaml.safe_load(path.read_text()) or {}
+    except FileNotFoundError:
+        return [], frozenset()
+    except ImportError:
+        return [], frozenset()
+    except Exception:
+        return [], frozenset()
+
+    sigs: list[tuple[str, list[str]]] = [
+        (e["name"], list(e["markers"]))
+        for e in data.get("signatures", [])
+        if e.get("name") and e.get("markers")
+    ]
+    inject: frozenset[str] = frozenset(data.get("inject_agents", []))
+    return sigs, inject
+
+
+# Populated at import time: built-ins merged with user config.
+_user_sigs, _user_inject = _load_user_config()
+_SIGNATURES: list[tuple[str, list[str]]] = list(_BUILTIN_SIGNATURES) + _user_sigs
+INJECT_CONTEXT_AGENTS: frozenset[str] = _BUILTIN_INJECT_AGENTS | _user_inject
 
 _ENV_DEPTH = "AI_MEM_HOOK_DEPTH"
 _ENV_TYPE = "AI_MEM_AGENT_TYPE"

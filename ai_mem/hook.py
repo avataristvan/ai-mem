@@ -187,7 +187,7 @@ def main():
                 f'Pass collection="{ctx.collection}" to mem_add and mem_query in this session.'
             )
             if not repo_focus:
-                parts.append("Run /mem-init to set the initial focus for this scope.")
+                parts.append("No focus entry found. Add one via mem_add with id=\"current_focus\".")
 
         delta = _session_delta(DB_PATH, current_count)
         if delta is not None:

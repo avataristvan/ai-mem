@@ -28,6 +28,9 @@ ml = [
 hybrid = [
   "rank_bm25>=0.7",
 ]
+config = [
+  "pyyaml>=6.0",
+]
 
 [project.scripts]
 mem-dream = "ai_mem.dream_cli:main"
