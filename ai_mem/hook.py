@@ -160,9 +160,16 @@ def main():
 
         expert_focus: str | None = None
         expert_collection: str | None = None
+        expert_entries: list = []
         if agent_type:
             expert_collection = f"subagent.{agent_type}"
             expert_focus = _focus_text(get_memory, expert_collection)
+            _query = repo_focus or f"{ctx.collection} patterns and best practices"
+            try:
+                _results = repo.query(expert_collection, _query, n_results=3, max_age_days=None)
+                expert_entries = [r for r in _results if r.id != FOCUS_ID][:2]
+            except Exception:
+                pass
 
         try:
             record_injection(_STATS_PATH, GLOBAL_COLLECTION, injected=global_focus is not None)
@@ -174,8 +181,15 @@ def main():
             parts.append(f"[{ctx.scope_name} focus]\n{_truncate(repo_focus, _FOCUS_PREVIEW_CHARS)}")
         if global_focus:
             parts.append(f"[global focus]\n{_truncate(global_focus, _FOCUS_PREVIEW_CHARS)}")
-        if expert_focus:
-            parts.append(f"[{agent_type} expertise]\n{_truncate(expert_focus, _FOCUS_PREVIEW_CHARS)}")
+        if expert_focus or expert_entries:
+            block = f"[{agent_type} expertise]"
+            if expert_focus:
+                block += f"\n{_truncate(expert_focus, _FOCUS_PREVIEW_CHARS)}"
+            if expert_entries:
+                block += "\nRelevant past learnings:\n" + "\n".join(
+                    f"- {_truncate(e.text, 200)}" for e in expert_entries
+                )
+            parts.append(block)
         if expert_collection:
             parts.append(
                 f'Expert collection: "subagent.{agent_type}". '

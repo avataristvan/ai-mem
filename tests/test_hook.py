@@ -36,6 +36,13 @@ def _make_repo_ctx(
     return ctx
 
 
+def _make_entry(id: str, text: str) -> MagicMock:
+    e = MagicMock()
+    e.id = id
+    e.text = text
+    return e
+
+
 def _run_main(
     tmp_path: Path,
     agent_type: str | None = None,
@@ -45,21 +52,29 @@ def _run_main(
     ranker_signal: str | None = None,
     session_delta: int | None = None,
     git_commits: list[str] | None = None,
+    expert_query_results: list | None = None,
 ) -> str:
     """Run hook.main() with mocked dependencies; return captured stdout.
 
     All imports in hook.py are now module-level, so patch.object(hook, ...) works.
     _focus_text, _ranker_signal, _session_delta, and _write_prev_session are
     patched directly to control output without standing up ChromaDB or RankerStorage.
+
+    expert_query_results: list of mock entries returned by repo.query() for the expert
+    collection. Use _make_entry(id, text) to build them. Default: empty list (MagicMock
+    default iteration yields nothing).
     """
     focus_map = focus_map or {}
 
     def fake_focus_text(get_memory_uc, collection: str) -> str | None:
         return focus_map.get(collection)
 
-    # ListCollectionsUseCase is imported inside main(); stub it via the module.
     mock_list_uc = MagicMock()
     mock_list_uc.return_value.execute.return_value = []
+
+    mock_chroma_cls = MagicMock()
+    mock_repo_instance = mock_chroma_cls.return_value
+    mock_repo_instance.query.return_value = expert_query_results or []
 
     agent_ctx = _make_agent_ctx(agent_type, should_inject)
     repo_ctx = _make_repo_ctx(collection=repo_collection)
@@ -76,7 +91,7 @@ def _run_main(
         patch.object(hook, "_write_prev_session"),
         patch.object(hook, "detect_for_session_start", return_value=agent_ctx),
         patch.object(hook, "write_to_env_file"),
-        patch.object(hook, "ChromaMemoryRepository"),
+        patch.object(hook, "ChromaMemoryRepository", mock_chroma_cls),
         patch.object(hook, "GetMemoryUseCase"),
         patch.object(hook, "detect_repo_context", return_value=repo_ctx),
         patch.object(hook, "record_injection"),
@@ -164,6 +179,42 @@ def test_expert_focus_is_truncated_to_preview_limit(tmp_path: Path) -> None:
     # The truncated text ends with the ellipsis character, not the full 300 chars
     assert "AAAA…" in ctx
     assert long_text not in ctx
+
+
+# ---------------------------------------------------------------------------
+# 4b. expert_query_results injected under "Relevant past learnings"
+# ---------------------------------------------------------------------------
+
+def test_expert_query_results_appear_in_expertise_block(tmp_path: Path) -> None:
+    entry = _make_entry("learned_ddd", "Always push domain logic down — never let infra leak upward.")
+    out = _run_main(
+        tmp_path,
+        agent_type="the-coder",
+        focus_map={"global": "global mem"},
+        expert_query_results=[entry],
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "[the-coder expertise]" in ctx
+    assert "Relevant past learnings" in ctx
+    assert "Always push domain logic down" in ctx
+
+
+def test_current_focus_excluded_from_expert_query_results(tmp_path: Path) -> None:
+    focus_entry = _make_entry("current_focus", "This is the focus entry.")
+    other_entry = _make_entry("learned_xyz", "Use dependency injection consistently.")
+    out = _run_main(
+        tmp_path,
+        agent_type="the-coder",
+        focus_map={"global": "global mem"},
+        expert_query_results=[focus_entry, other_entry],
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "This is the focus entry." not in ctx  # focus entry filtered out
+    assert "Use dependency injection consistently." in ctx
 
 
 # ---------------------------------------------------------------------------
