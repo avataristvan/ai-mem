@@ -17,6 +17,8 @@ python -m pytest tests/ -v  # run tests
 mem-dream --dry-run         # preview entries without API calls
 mem-dream --mode hier       # consolidate all collections (hier = default)
 mem-dream --mode team --collection repo.my-project  # team exchange, one collection
+mem-dream --expert                                  # consolidate all subagent.* collections with expert focus hint
+mem-dream --expert --dry-run                        # preview which subagent.* collections exist
 ```
 
 ## Architecture
@@ -32,7 +34,7 @@ Capability-centric DDD — three layers, no upward imports.
 - `AddEdgeUseCase` — validates both endpoints exist, deduplicates on (target_id, edge_type), writes via `repo.add_edge()`
 - `GetEdgesUseCase` — thin wrapper over `repo.get_edges()`
 - `TrainRankerUseCase` — buffer write, label assignment (7-day window), gradient step, NaN-loss guard, labeled-example eviction
-- `RankerRegistry` — lazy-loads and caches one ranker per scope key; implements `RankerProvider`; lives in application layer because it coordinates infrastructure artifacts
+- `RankerRegistry` — lazy-loads and caches one ranker per scope key; implements `RankerProvider`; lives in application layer because it coordinates infrastructure artifacts. Gate: when `fallback_factory` is set (NullRanker), returns fallback if `labeled_count < MIN_LABELED_EXAMPLES` (10) — random MLP weights are worse than UCB heuristic. `MIN_LABELED_EXAMPLES` is the canonical constant defined here; `userprompt_hook.py` imports from here.
 - `CleanupMemoryUseCase` — returns `CleanupResult(collections: dict[str, CollectionCleanupStats])`
 - `ListEntriesUseCase` — returns all entries in a collection as `[{id, title}]`; title = first non-empty line, max 80 chars
 
@@ -40,7 +42,7 @@ Capability-centric DDD — three layers, no upward imports.
 - `ChromaMemoryRepository` — timestamps as Unix float metadata: `created_at`, `expires_at`, `last_accessed_at`, `access_count`
 - `BM25MemoryRepository` — optional wrapper; fetches 50 candidates from inner repo, fuses BM25+cosine scores, returns hybrid-ranked results. Requires `rank_bm25` (`.[hybrid]`). Wired in `server.py` and `userprompt_hook.py` with `try/except ImportError` fallback.
 - `TorchMicroRanker` — `[9→32→16→1]` MLP, AdamW lr=1e-3, BCE + 0.3×contrastive loss. `seed` param for deterministic init in tests only.
-- `NullRanker` — UCB fallback ranker: `cosine_similarity * penalty + 0.15/sqrt(access_count)`; session-hit penalty 0.7; exploration bonus decays to ~0 at high access_count; active when torch is absent
+- `NullRanker` — UCB fallback ranker: `cosine_similarity * penalty + 0.15/sqrt(access_count)`; session-hit penalty scales with access_count (0.7 for new entries → 1.0 at 10+ accesses); exploration bonus decays to ~0 at high access_count; active when torch is absent or ranker below gate threshold
 - `RankerStorage` — implements `TrainingBufferRepository`; JSONL buffer + `.pt` weights per scope key
 
 **Adapter** (`ai_mem/server.py`) — wires use cases at module load, exposes MCP tools. Claude Code lifecycle hooks:
@@ -70,7 +72,10 @@ Capability-centric DDD — three layers, no upward imports.
 - `mem_dream` accepts an optional `focus_hint: str` to steer consolidation. For expert collections (`subagent.*`), pass: `"Cross-project learnings from a <role> agent. Flag entries too project-specific to keep. Prefer DELETE over MERGE for project-specific entries."` — this distinguishes transferable patterns from project-specific facts.
 - Dream preamble pattern: `_TYPE_RULES` + `focus_hint` are prepended to the `memories` string before each Claude call, not injected into prompt template strings. Add context to dreams this way — not by modifying the prompt constants.
 - `TrainingExample.target_future_access` is the label field (0.0, 1.0, or None). There is NO `.label` attribute — using `.label` silently returns 0 labeled examples (AttributeError caught by the surrounding try/except). Always use `.target_future_access` when counting labeled examples.
-- `_ranker_signal(collection)` in `hook.py` — reads `RankerStorage` directly (collection name as scope key) and returns a one-line calibration status appended to the SessionStart output. Returns None when no examples exist (new collection, no noise). `_RANKER_MIN_LABELED = 10` mirrors `MIN_LABELED_EXAMPLES` in `userprompt_hook.py`.
+- `_ranker_signal(collection)` in `hook.py` — reads `RankerStorage` directly (collection name as scope key) and returns a one-line calibration status appended to the SessionStart output. Returns None when no examples exist (new collection, no noise). `_RANKER_MIN_LABELED = 10` mirrors `MIN_LABELED_EXAMPLES` from `ranker_registry.py` (canonical source).
+- `mem_get(ids, collection)` — direct ID lookup, bypasses semantic search and ranking entirely. Use when the exact ID is known (e.g. never-accessed entries invisible to `mem_query`). Backed by `GetMemoryUseCase`.
+- User config `~/.config/ai-mem/agents.yaml` accepts a `settings:` block: `min_label_score` (posttool_hook label threshold, default 0.50) and `query_k` (posttool_hook candidate count, default 5). Loaded by `_load_settings()` in `agent_context.py`.
+- `QueryMemoryUseCase.execute()` accepts `min_score_for_tracking: float | None` — entries below this cosine threshold skip `last_accessed_at` update and immediate 1.0 label. Used by `posttool_hook` to prevent weak path-match labels.
 - Anti-pattern injection in `userprompt_hook.py` bypasses the ranker gate (`MIN_LABELED_EXAMPLES` / `MIN_AVG_SCORE`) — queries `type_filter="anti-pattern"` independently with `ANTIPATTERN_MIN_SCORE = 0.4` (high recall: missing a warning is worse than a false alarm). Output block `[ai-mem warnings]` with `⚠` prefix appears before `[ai-mem]` context.
 
 ## Typed Causal Edges

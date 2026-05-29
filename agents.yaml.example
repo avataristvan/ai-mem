@@ -18,3 +18,4 @@ signatures:
 
 settings:
   # min_label_score: 0.50   # [0.0–1.0] posttool_hook label threshold
+  # query_k: 5              # number of candidates fetched per posttool_hook query

@@ -36,14 +36,15 @@ def _build_deps():
 
 
 def _signal_collection(
-    query_uc, train_uc, collection: str, query: str, now: float, min_label_score: float
+    query_uc, train_uc, collection: str, query: str, now: float,
+    min_label_score: float, query_k: int = _QUERY_K,
 ) -> None:
     """Query a collection (updating last_accessed_at) then run a train_step."""
     try:
         query_uc.execute(
             collection=collection,
             query=query,
-            n_results=_QUERY_K,
+            n_results=query_k,
             min_score_for_tracking=min_label_score,
         )
     except Exception:
@@ -69,6 +70,7 @@ def main():
 
     settings = _load_settings(_CONFIG_PATH)
     min_label_score = float(settings.get("min_label_score", _MIN_LABEL_SCORE))
+    query_k = int(settings.get("query_k", _QUERY_K))
 
     try:
         query_uc, train_uc = _build_deps()
@@ -79,12 +81,12 @@ def main():
     query = f"{file_name} {file_path}"
     now = time.time()
 
-    _signal_collection(query_uc, train_uc, GLOBAL_COLLECTION, query, now, min_label_score)
+    _signal_collection(query_uc, train_uc, GLOBAL_COLLECTION, query, now, min_label_score, query_k)
 
     try:
         ctx = detect_repo_context()
         if ctx.collection not in (GLOBAL_COLLECTION, WORKSPACE_COLLECTION):
-            _signal_collection(query_uc, train_uc, ctx.collection, query, now, min_label_score)
+            _signal_collection(query_uc, train_uc, ctx.collection, query, now, min_label_score, query_k)
     except Exception:
         pass
 
