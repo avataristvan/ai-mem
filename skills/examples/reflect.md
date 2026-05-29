@@ -100,15 +100,33 @@ Skip silently if nothing was outdated.
 
 ---
 
+**Negative signal (ranker correction)**
+
+Silently review which memories were injected this session (visible in UserPromptSubmit hook output). Were any of them retrieved but not actually useful — correct topic, wrong level of detail, or just noise?
+
+Collect their IDs. If any: pass them as `negative_ids` to the train call below.
+
+This corrects a known ranker edge case: `posttool_hook` labels entries positive whenever the edited file path matches semantically — even if the retrieved entry was unrelated to the actual task. `negative_ids` overrides that automatic positive label.
+
+---
+
 **Positive signal**
 
 Silently check: `git log --oneline --since="session start" 2>/dev/null | head -5`
 
-If commits found: `mem_train(collection=<active>)` — no user confirmation needed.
+If commits found:
+
+```python
+# without negative corrections
+mem_train(collection=<active>)
+
+# with negative corrections
+mem_train(collection=<active>, negative_ids=["id1", "id2"])
+```
 
 Skip silently if no commit was found.
 
-Note in the Close summary if mem_train ran or if entries were reformed.
+Note in the Close summary if mem_train ran, if entries were reformed, and if negative_ids were passed.
 
 ---
 
