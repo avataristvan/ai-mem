@@ -18,6 +18,7 @@ from ai_mem.application.delete_memory import DeleteMemoryUseCase
 from ai_mem.application.detect_split_hints import DetectSplitHintsUseCase
 from ai_mem.application.dream_memory import DreamMemoryUseCase, MODES
 from ai_mem.application.get_edges import GetEdgesUseCase
+from ai_mem.application.get_memory import GetMemoryUseCase
 from ai_mem.application.list_collections import ListCollectionsUseCase
 from ai_mem.application.list_entries import ListEntriesUseCase
 from ai_mem.application.load_ranker_config import LoadRankerConfigUseCase
@@ -73,6 +74,7 @@ _dream = DreamMemoryUseCase(_repo)
 _split = SplitMemoryUseCase(_repo, _add)
 _add_edge = AddEdgeUseCase(_repo)
 _get_edges = GetEdgesUseCase(_repo)
+_get_memory = GetMemoryUseCase(_repo)
 
 server = Server("ai-mem")
 
@@ -126,6 +128,18 @@ async def list_tools() -> list[types.Tool]:
                     "type": {"type": "string", "description": "Only return entries with this type tag (e.g. 'feedback', 'reference')"},
                 },
                 "required": ["query"],
+            },
+        ),
+        types.Tool(
+            name="mem_get",
+            description="Fetch specific memory entries by ID. Use when you know the exact ID(s) — bypasses semantic search and ranking entirely.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "ids": {"type": "array", "items": {"type": "string"}, "description": "Entry IDs to fetch"},
+                    "collection": {"type": "string", "description": f"Collection name (default: '{DEFAULT_COLLECTION}')"},
+                },
+                "required": ["ids"],
             },
         ),
         types.Tool(
@@ -432,6 +446,11 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 for h in split_hints
             ],
         }
+        return [types.TextContent(type="text", text=json.dumps(out, indent=2, ensure_ascii=False))]
+
+    if name == "mem_get":
+        entries = _get_memory.execute(collection, arguments["ids"])
+        out = [{"id": e.id, "text": e.text, "metadata": e.metadata} for e in entries]
         return [types.TextContent(type="text", text=json.dumps(out, indent=2, ensure_ascii=False))]
 
     if name == "mem_list":
