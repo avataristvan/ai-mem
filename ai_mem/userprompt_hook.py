@@ -5,6 +5,7 @@ import os
 import sys
 from pathlib import Path
 
+from ai_mem.application.ranker_registry import MIN_LABELED_EXAMPLES
 from ai_mem.repo_context import GLOBAL_COLLECTION, WORKSPACE_COLLECTION, detect_repo_context
 
 DB_PATH = Path(os.environ.get("AI_MEM_PATH", Path.home() / ".local" / "share" / "ai-mem"))
@@ -12,7 +13,6 @@ _STATS_PATH = DB_PATH / "session_stats.json"
 TOP_K = 3
 MAX_CHARS_PER_HIT = 300
 MAX_TOTAL_CHARS = 1500
-MIN_LABELED_EXAMPLES = 10
 MIN_AVG_SCORE = 0.55
 SESSION_TTL_HOURS = 4
 ANTIPATTERN_TOP_K = 2

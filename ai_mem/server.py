@@ -44,8 +44,11 @@ _storage = RankerStorage(_db_path / "rankers")
 
 try:
     from ai_mem.infrastructure.torch_ranker import TorchMicroRanker as _RankerClass
+    from ai_mem.infrastructure.null_ranker import NullRanker as _FallbackClass
+    _fallback_factory = _FallbackClass
 except ImportError:
     from ai_mem.infrastructure.null_ranker import NullRanker as _RankerClass  # type: ignore[assignment]
+    _fallback_factory = None
 
 _scope_map = LoadRankerConfigUseCase(_db_path / "ranker_config.json").execute()
 
@@ -58,6 +61,7 @@ _registry = RankerRegistry(
     scope_resolver=_scope_resolver,
     ranker_factory=_RankerClass,
     storage=_storage,
+    fallback_factory=_fallback_factory,
 )
 
 _track_access = TrackAccessUseCase(_repo)

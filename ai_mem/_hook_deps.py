@@ -11,10 +11,10 @@ from pathlib import Path
 def _resolve_ranker_class():
     try:
         from ai_mem.infrastructure.torch_ranker import TorchMicroRanker
-        return TorchMicroRanker
+        return TorchMicroRanker, True
     except ImportError:
         from ai_mem.infrastructure.null_ranker import NullRanker  # type: ignore[assignment]
-        return NullRanker
+        return NullRanker, False
 
 
 def _build_core(db_path: Path, with_bm25: bool = False):
@@ -30,7 +30,7 @@ def _build_core(db_path: Path, with_bm25: bool = False):
     from ai_mem.infrastructure.chroma_repository import ChromaMemoryRepository
     from ai_mem.infrastructure.ranker_storage import RankerStorage
 
-    RankerClass = _resolve_ranker_class()
+    RankerClass, has_torch = _resolve_ranker_class()
     repo = ChromaMemoryRepository(db_path)
     if with_bm25:
         try:
@@ -41,8 +41,15 @@ def _build_core(db_path: Path, with_bm25: bool = False):
     storage = RankerStorage(db_path / "rankers")
     scope_map = LoadRankerConfigUseCase(db_path / "ranker_config.json").execute()
     scope_resolver = lambda c: scope_map.get(c, RankerScope(name=c, mode="isolated"))
+    fallback_factory = None
+    if has_torch:
+        from ai_mem.infrastructure.null_ranker import NullRanker
+        fallback_factory = NullRanker
     registry = RankerRegistry(
-        scope_resolver=scope_resolver, ranker_factory=RankerClass, storage=storage
+        scope_resolver=scope_resolver,
+        ranker_factory=RankerClass,
+        storage=storage,
+        fallback_factory=fallback_factory,
     )
     return repo, storage, scope_resolver, registry, RankerClass
 
