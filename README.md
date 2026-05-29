@@ -50,6 +50,7 @@ pip install -e ".[ml]"   # requires PyTorch
 | `mem_train` | Run a training step on the learned re-ranker for one or all collections. |
 | `mem_split` | Split a long entry into focused sub-entries for more precise retrieval. |
 | `mem_dream` | Consolidate a collection using Claude — detects contradictions, redundancies, and stale entries. |
+| `mem_get` | Fetch entries by ID directly — bypasses semantic search and ranking. Use when the exact ID is known. |
 | `mem_link` | Create a typed causal edge between two entries (`contradicts`, `fixes`, `causes`, `related`). |
 | `mem_edges` | List all outgoing edges for an entry. |
 
@@ -134,6 +135,47 @@ Collections not listed are isolated (default). Restart the MCP server after edit
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AI_MEM_PATH` | `~/.local/share/ai-mem` | Database and ranker weights location |
+
+### Custom agents (`~/.config/ai-mem/agents.yaml`)
+
+Register your own agents and tune hook parameters:
+
+```yaml
+inject_agents:
+  - my-coding-agent       # subagents that receive ai-mem context even when spawned
+
+signatures:
+  - name: my-coding-agent
+    markers:
+      - "unique phrase from the agent's system prompt"
+
+settings:
+  min_label_score: 0.50   # [0.0–1.0] posttool_hook label threshold
+  query_k: 5              # posttool_hook candidate count
+```
+
+Requires `pyyaml`: `pip install ai-mem[config]`. Falls back to defaults if absent.
+
+## Architecture
+
+Three-layer capability-centric DDD — imports only flow downward.
+
+| Layer | Path | Role |
+|---|---|---|
+| Domain | `ai_mem/domain/` | Pure contracts (`MemoryRepository`, `LearnedRanker`, `TrainingBufferRepository` protocols). No I/O, no torch. |
+| Application | `ai_mem/application/` | One use case per file, single `execute()`, deps injected. `RankerRegistry` gates `TorchMicroRanker` behind `MIN_LABELED_EXAMPLES=10` — falls back to `NullRanker` until trained. |
+| Infrastructure | `ai_mem/infrastructure/` | `ChromaMemoryRepository`, `BM25MemoryRepository` (optional wrapper), `TorchMicroRanker` `[9→32→16→1]` MLP, `NullRanker` UCB fallback, `RankerStorage`. |
+
+`server.py` is the adapter — wires use cases at module load, exposes MCP tools.
+
+## Uninstall
+
+```bash
+python3 uninstall.py          # interactive — remove hooks, MCP entry, commands
+python3 uninstall.py --dry-run  # preview without changes
+```
+
+Memory data (`~/.local/share/ai-mem`) and user config (`~/.config/ai-mem`) are never touched.
 
 ## Update
 

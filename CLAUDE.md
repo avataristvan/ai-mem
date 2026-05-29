@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Agent-facing supplement to README.md. Contains dev commands, architecture navigation, and non-obvious conventions.
+Agent-facing supplement to README.md. Dev commands and critical contributor gotchas.
 
 ## Dev Commands
 
@@ -9,85 +9,25 @@ pip install -e .            # editable install (no ML, no BM25)
 pip install -e ".[hybrid]"  # with BM25 hybrid search
 pip install -e ".[ml]"      # with PyTorch re-ranker
 pip install -e ".[dream]"   # with Anthropic SDK for mem-dream
+pip install -e ".[config]"  # with pyyaml for agents.yaml support
 python3 -m ai_mem.server    # run MCP server directly
 python3 install.py          # register with Claude Code / Gemini CLI / Cursor
+python3 uninstall.py        # remove all integration artifacts (preserves data)
 python3 -m ai_mem.hook          # run SessionStart hook manually
 python3 -m ai_mem.posttool_hook # run PostToolUse hook manually (pipe JSON payload on stdin)
 python -m pytest tests/ -v  # run tests
 mem-dream --dry-run         # preview entries without API calls
 mem-dream --mode hier       # consolidate all collections (hier = default)
-mem-dream --mode team --collection repo.my-project  # team exchange, one collection
-mem-dream --expert                                  # consolidate all subagent.* collections with expert focus hint
-mem-dream --expert --dry-run                        # preview which subagent.* collections exist
+mem-dream --expert          # consolidate all subagent.* collections with expert focus hint
 ```
 
-## Architecture
+## Critical Invariants
 
-Capability-centric DDD — three layers, no upward imports.
+Things that will bite you in the first hour:
 
-**Domain** (`ai_mem/domain/`) — pure contracts, no I/O, no torch.
-- `memory.py` — `MemoryEntry`, `QueryResult`, `CollectionInfo`, `MemoryRepository` Protocol, `MemoryEdge`, `EdgeType`
-- `learning.py` — `RankingFeatures` (frozen, 9-element `as_vector()`), `TrainingExample`, `TrainingMetrics`, `RankerScope`, `LearnedRanker` Protocol, `TrainingBufferRepository` Protocol, `RankerProvider` Protocol
-
-**Application** (`ai_mem/application/`) — one use case per file, single `execute()`, deps injected via `__init__`.
-- `QueryMemoryUseCase` — top-50 fetch → build features → `RankerProvider.get()` → re-rank → truncate → track access → record training signal → 1-hop edge follow (budget: 2 linked entries appended)
-- `AddEdgeUseCase` — validates both endpoints exist, deduplicates on (target_id, edge_type), writes via `repo.add_edge()`
-- `GetEdgesUseCase` — thin wrapper over `repo.get_edges()`
-- `TrainRankerUseCase` — buffer write, label assignment (7-day window), gradient step, NaN-loss guard, labeled-example eviction
-- `RankerRegistry` — lazy-loads and caches one ranker per scope key; implements `RankerProvider`; lives in application layer because it coordinates infrastructure artifacts. Gate: when `fallback_factory` is set (NullRanker), returns fallback if `labeled_count < MIN_LABELED_EXAMPLES` (10) — random MLP weights are worse than UCB heuristic. `MIN_LABELED_EXAMPLES` is the canonical constant defined here; `userprompt_hook.py` imports from here.
-- `CleanupMemoryUseCase` — returns `CleanupResult(collections: dict[str, CollectionCleanupStats])`
-- `ListEntriesUseCase` — returns all entries in a collection as `[{id, title}]`; title = first non-empty line, max 80 chars
-
-**Infrastructure** (`ai_mem/infrastructure/`)
-- `ChromaMemoryRepository` — timestamps as Unix float metadata: `created_at`, `expires_at`, `last_accessed_at`, `access_count`
-- `BM25MemoryRepository` — optional wrapper; fetches 50 candidates from inner repo, fuses BM25+cosine scores, returns hybrid-ranked results. Requires `rank_bm25` (`.[hybrid]`). Wired in `server.py` and `userprompt_hook.py` with `try/except ImportError` fallback.
-- `TorchMicroRanker` — `[9→32→16→1]` MLP, AdamW lr=1e-3, BCE + 0.3×contrastive loss. `seed` param for deterministic init in tests only.
-- `NullRanker` — UCB fallback ranker: `cosine_similarity * penalty + 0.15/sqrt(access_count)`; session-hit penalty scales with access_count (0.7 for new entries → 1.0 at 10+ accesses); exploration bonus decays to ~0 at high access_count; active when torch is absent or ranker below gate threshold
-- `RankerStorage` — implements `TrainingBufferRepository`; JSONL buffer + `.pt` weights per scope key
-
-**Adapter** (`ai_mem/server.py`) — wires use cases at module load, exposes MCP tools. Claude Code lifecycle hooks:
-- `hook.py` — SessionStart: injects current_focus + collection routing
-- `userprompt_hook.py` — UserPromptSubmit: injects relevant memories when ranker is trained enough
-- `pretool_hook.py` — PreToolUse(Write|Edit): injects relevant past experiences before a file is touched
-- `posttool_hook.py` — PostToolUse(Write|Edit): silent passive training signal; queries global + repo collections with the edited file path, updating `last_accessed_at` on matching entries so `train_step` labels them positive in the 7-day window. No output to Claude.
-
-**Utility modules** (not use-case classes — standalone functions, no DI):
-- `session_stats.py` — `record_injection` / `injection_rate`; rolling 20-session JSONL at `{DB_PATH}/session_stats.json`
-
-## Key Conventions
-
-- `mem_delete` with no `ids` drops the entire collection; repo signals this by returning `-1`.
-- `current_focus` (id `"current_focus"`) is the primary context entry per collection. The Stop hook reminds the agent to update it when files changed.
+- `TrainingExample` has **no `.label` attribute** — use `.target_future_access is not None` to check for a label. `.label` raises `AttributeError` silently caught by surrounding try/except, making labeled counts always 0.
+- Tests that call `upsert` directly must include non-empty metadata (ChromaDB rejects empty dicts). Use `AddMemoryUseCase` in tests — it always injects timestamps.
+- `posttool_hook.py` imports `GLOBAL_COLLECTION`, `WORKSPACE_COLLECTION`, and `detect_repo_context` at **module level** (not lazily inside `main()`) so tests can patch them via `patch.object`. Hooks that use lazy imports inside `main()` are not patchable at module scope.
+- `MIN_LABELED_EXAMPLES = 10` is defined in `ranker_registry.py` — that is the canonical source. `userprompt_hook.py` and `hook.py` import/mirror from there.
+- `mem_delete` with no `ids` drops the **entire collection**; repo signals this by returning `-1`.
 - `RankingFeatures.cosine_similarity` = `1 - chromadb_distance` (higher = more relevant). Never invert.
-- `_FETCH_K = 50` in `QueryMemoryUseCase` — always over-fetches 50 candidates before re-ranking; `n_results` only controls final truncation.
-- Hybrid mode: buffer and weights files are keyed by **group name**, not collection name. `RankerRegistry.scope_key()` resolves this.
-- `source_collection: str | None` on `TrainingExample` — `None` means the field was absent in older buffer files (backwards-compat on deserialize).
-- `BM25MemoryRepository` is transparent to the application layer — `QueryResult.score` holds the fused hybrid score, which becomes `RankingFeatures.cosine_similarity` in `BuildFeaturesUseCase`. The app layer never detects the wrapper.
-- Tests that call `upsert` directly must include non-empty metadata (ChromaDB rejects empty dicts). Use `AddMemoryUseCase` in tests to avoid this — it always injects timestamps.
-- `type` metadata field: `mem_add` accepts an optional `type` param (e.g. `"feedback"`, `"reference"`, `"project"`, `"user"`). `mem_query` accepts a matching `type` filter. ChromaDB `$and` is used when both `max_age_days` and `type_filter` are set.
-- `mem_list` with a `collection` param returns entry titles instead of collection counts; backed by `ListEntriesUseCase` and `get_all()`.
-- `BM25MemoryRepository.query()` forwards `type_filter` to the inner repo — filter is applied at the ChromaDB level before BM25 re-ranking.
-- `posttool_hook.py` imports `GLOBAL_COLLECTION`, `WORKSPACE_COLLECTION`, and `detect_repo_context` at module level (not lazily inside `main()`) so tests can patch them via `patch.object(hook, ...)`. This is the same pattern as `userprompt_hook.py`. Hooks that use lazy `from ... import` inside `main()` are not patchable at module scope.
-- PostToolUse hook does NOT wrap the inner repo with `BM25MemoryRepository` — BM25 adds latency and the hook only needs semantic proximity for label propagation, not high-precision retrieval.
-- `mem_dream` accepts an optional `focus_hint: str` to steer consolidation. For expert collections (`subagent.*`), pass: `"Cross-project learnings from a <role> agent. Flag entries too project-specific to keep. Prefer DELETE over MERGE for project-specific entries."` — this distinguishes transferable patterns from project-specific facts.
-- Dream preamble pattern: `_TYPE_RULES` + `focus_hint` are prepended to the `memories` string before each Claude call, not injected into prompt template strings. Add context to dreams this way — not by modifying the prompt constants.
-- `TrainingExample.target_future_access` is the label field (0.0, 1.0, or None). There is NO `.label` attribute — using `.label` silently returns 0 labeled examples (AttributeError caught by the surrounding try/except). Always use `.target_future_access` when counting labeled examples.
-- `_ranker_signal(collection)` in `hook.py` — reads `RankerStorage` directly (collection name as scope key) and returns a one-line calibration status appended to the SessionStart output. Returns None when no examples exist (new collection, no noise). `_RANKER_MIN_LABELED = 10` mirrors `MIN_LABELED_EXAMPLES` from `ranker_registry.py` (canonical source).
-- `mem_get(ids, collection)` — direct ID lookup, bypasses semantic search and ranking entirely. Use when the exact ID is known (e.g. never-accessed entries invisible to `mem_query`). Backed by `GetMemoryUseCase`.
-- User config `~/.config/ai-mem/agents.yaml` accepts a `settings:` block: `min_label_score` (posttool_hook label threshold, default 0.50) and `query_k` (posttool_hook candidate count, default 5). Loaded by `_load_settings()` in `agent_context.py`.
-- `QueryMemoryUseCase.execute()` accepts `min_score_for_tracking: float | None` — entries below this cosine threshold skip `last_accessed_at` update and immediate 1.0 label. Used by `posttool_hook` to prevent weak path-match labels.
-- Anti-pattern injection in `userprompt_hook.py` bypasses the ranker gate (`MIN_LABELED_EXAMPLES` / `MIN_AVG_SCORE`) — queries `type_filter="anti-pattern"` independently with `ANTIPATTERN_MIN_SCORE = 0.4` (high recall: missing a warning is worse than a false alarm). Output block `[ai-mem warnings]` with `⚠` prefix appears before `[ai-mem]` context.
-
-## Typed Causal Edges
-
-Entries can be linked with directional typed edges (`contradicts`, `fixes`, `causes`, `related`).
-
-**Storage**: edges are stored as a JSON-encoded string in the `edges` metadata field of the **source** entry. ChromaDB only accepts scalar metadata values, so the list is `json.dumps`/`json.loads` as a string. `_parse_edges()` in `chroma_repository.py` always returns `[]` on parse error (silent).
-
-**Retrieval**: `QueryMemoryUseCase._append_linked()` runs after the primary ranked results are assembled. It follows all outgoing edges of each result entry (1-hop only, no recursion), fetches the target via `get_by_ids`, and appends any target not already in the result set. Budget: 2 linked entries per query total. Appended entries have `via_edge` and `via_source` in their metadata. Edge traversal is wrapped in a bare `except Exception: pass` so it cannot crash a query.
-
-**Protocol**: `MemoryRepository` has two new methods — `add_edge(collection, source_id, edge)` and `get_edges(collection, entry_id) → list[MemoryEdge]`. Both `ChromaMemoryRepository` and `BM25MemoryRepository` implement them (`BM25` delegates to inner).
-
-**MCP tools**: `mem_link(source_id, target_id, edge_type, collection)` and `mem_edges(entry_id, collection)`.
-
-**Test for edge-follow**: the `linked_target` entry must NOT be semantically similar to the query — otherwise ChromaDB returns it directly and `via_edge` is never set (the dedup guard skips it). Use semantically unrelated text (e.g. `ZZZQQQXXX boilerplate`) for the linked target in tests.
