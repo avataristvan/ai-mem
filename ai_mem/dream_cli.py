@@ -14,6 +14,15 @@ from ai_mem.infrastructure.chroma_repository import ChromaMemoryRepository
 _DB_PATH = Path(os.environ.get("AI_MEM_PATH", Path.home() / ".local/share/ai-mem"))
 _LOG_DIR = Path.home() / ".claude/dream-log"
 
+_EXPERT_FOCUS_HINT = (
+    "Cross-project learnings from specialized AI agent roles (subagent.* collections). "
+    "Each collection is one agent's accumulated experience across all projects.\n"
+    "- Flag entries that are too project-specific for a cross-project collection → prefer DELETE\n"
+    "- Patterns applicable across all projects → flag for propagation to global\n"
+    "- Prefer DELETE over MERGE for project-specific entries: losing a fact is better "
+    "than keeping noise that corrupts cross-project intuition."
+)
+
 
 def _build_repo():
     try:
@@ -33,6 +42,8 @@ def main() -> None:
                         help="Consolidation mode (default: hier)")
     parser.add_argument("--collection", metavar="NAME",
                         help="Limit to one collection (default: all)")
+    parser.add_argument("--expert", action="store_true",
+                        help="Consolidate all subagent.* collections with expert focus hint")
     parser.add_argument("--dry-run", action="store_true",
                         help="List entries that would be processed, no API calls")
     parser.add_argument("--no-save", action="store_true",
@@ -41,20 +52,37 @@ def main() -> None:
 
     repo = _build_repo()
 
+    expert_collections: list[str] | None = None
+    focus_hint: str | None = None
+    if args.expert:
+        all_cols = [c.name for c in repo.list_collections()]
+        expert_collections = [c for c in all_cols if c.startswith("subagent.")]
+        if not expert_collections:
+            print("No subagent.* collections found.", file=sys.stderr)
+            return
+        focus_hint = _EXPERT_FOCUS_HINT
+        print(f"[dream:expert] collections: {expert_collections}", file=sys.stderr)
+
     if args.dry_run:
-        collections = [args.collection] if args.collection else [c.name for c in repo.list_collections()]
+        cols = expert_collections or ([args.collection] if args.collection else [c.name for c in repo.list_collections()])
         total = 0
-        for col in collections:
+        for col in cols:
             entries = repo.get_all(col)
             print(f"{col}: {len(entries)} entries")
             total += len(entries)
-        print(f"Total: {total} entries across {len(collections)} collection(s)")
+        print(f"Total: {total} entries across {len(cols)} collection(s)")
         return
 
-    print(f"[dream:{args.mode}] running...", file=sys.stderr)
+    label = f"expert:{args.mode}" if args.expert else args.mode
+    print(f"[dream:{label}] running...", file=sys.stderr)
     use_case = DreamMemoryUseCase(repo)
     try:
-        result = use_case.execute(args.collection, args.mode)
+        result = use_case.execute(
+            args.collection,
+            args.mode,
+            focus_hint=focus_hint,
+            collections_filter=expert_collections,
+        )
     except (RuntimeError, subprocess.CalledProcessError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -64,7 +92,7 @@ def main() -> None:
     if not args.no_save:
         _LOG_DIR.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y-%m-%d-%H%M")
-        log_path = _LOG_DIR / f"{ts}-{args.mode}.md"
+        log_path = _LOG_DIR / f"{ts}-{label}.md"
         log_path.write_text(result)
         print(f"\n→ saved: {log_path}", file=sys.stderr)
 

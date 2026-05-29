@@ -207,15 +207,17 @@ class DreamMemoryUseCase:
         mode: str,
         auto_delete: bool = False,
         focus_hint: str | None = None,
+        collections_filter: list[str] | None = None,
     ) -> str:
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
 
-        collections = (
-            [collection]
-            if collection
-            else [c.name for c in self._repo.list_collections()]
-        )
+        if collections_filter is not None:
+            collections = collections_filter
+        elif collection:
+            collections = [collection]
+        else:
+            collections = [c.name for c in self._repo.list_collections()]
 
         all_entries = []
         for col in collections:
