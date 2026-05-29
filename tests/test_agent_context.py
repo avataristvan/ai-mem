@@ -10,6 +10,7 @@ from ai_mem.agent_context import (
     AgentContext,
     _BUILTIN_SIGNATURES,
     _BUILTIN_INJECT_AGENTS,
+    _load_user_config,
     detect_for_hook,
     detect_for_session_start,
     write_to_env_file,
@@ -232,3 +233,58 @@ class TestWriteToEnvFile:
         content = env_file.read_text()
         assert "EXISTING_VAR=foo" in content
         assert "AI_MEM_HOOK_DEPTH=1" in content
+
+
+# ---------------------------------------------------------------------------
+# _load_user_config
+# ---------------------------------------------------------------------------
+
+class TestLoadUserConfig:
+    def test_valid_yaml(self, tmp_path):
+        cfg = tmp_path / "agents.yaml"
+        cfg.write_text(
+            "inject_agents:\n  - my-agent\nsignatures:\n"
+            "  - name: my-agent\n    markers:\n      - unique phrase\n"
+        )
+        sigs, inject = _load_user_config(cfg)
+        assert inject == frozenset({"my-agent"})
+        assert ("my-agent", ["unique phrase"]) in sigs
+
+    def test_multiple_markers(self, tmp_path):
+        cfg = tmp_path / "agents.yaml"
+        cfg.write_text(
+            "signatures:\n  - name: x\n    markers:\n      - alpha\n      - beta\n"
+        )
+        sigs, _ = _load_user_config(cfg)
+        assert ("x", ["alpha", "beta"]) in sigs
+
+    def test_missing_file_returns_empty(self, tmp_path):
+        sigs, inject = _load_user_config(tmp_path / "nonexistent.yaml")
+        assert sigs == []
+        assert inject == frozenset()
+
+    def test_empty_file_returns_empty(self, tmp_path):
+        cfg = tmp_path / "agents.yaml"
+        cfg.write_text("")
+        sigs, inject = _load_user_config(cfg)
+        assert sigs == []
+        assert inject == frozenset()
+
+    def test_entry_without_markers_skipped(self, tmp_path):
+        cfg = tmp_path / "agents.yaml"
+        cfg.write_text("signatures:\n  - name: bad-entry\n")
+        sigs, _ = _load_user_config(cfg)
+        assert sigs == []
+
+    def test_merges_into_module_signatures(self, tmp_path):
+        cfg = tmp_path / "agents.yaml"
+        cfg.write_text(
+            "inject_agents:\n  - my-agent\nsignatures:\n"
+            "  - name: my-agent\n    markers:\n      - my marker\n"
+        )
+        user_sigs, user_inject = _load_user_config(cfg)
+        merged_sigs = list(_BUILTIN_SIGNATURES) + user_sigs
+        merged_inject = _BUILTIN_INJECT_AGENTS | user_inject
+        assert "my-agent" in merged_inject
+        assert any(name == "my-agent" for name, _ in merged_sigs)
+        assert all(name != "my-agent" for name, _ in _BUILTIN_SIGNATURES)
