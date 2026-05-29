@@ -315,6 +315,7 @@ async def list_tools() -> list[types.Tool]:
 _PATTERN_LINK_THRESHOLD = 0.4
 _PATTERN_LINK_MAX = 2
 CONTRADICTION_THRESHOLD = 0.75
+_CONTRADICTION_UPPER = 0.97  # near-identical embeddings are format artifacts, not semantic contradictions
 _CONTRADICTION_MAX = 3
 
 
@@ -372,7 +373,7 @@ def _detect_contradictions(collection: str, type_tag: str, documents: list[str])
             )
             seen_ids = {h["id"] for h in hits}
             for r in results:
-                if (r.score or 0.0) >= CONTRADICTION_THRESHOLD and r.id not in seen_ids:
+                if CONTRADICTION_THRESHOLD <= (r.score or 0.0) < _CONTRADICTION_UPPER and r.id not in seen_ids:
                     hits.append({"id": r.id, "score": round(r.score, 2), "preview": r.text[:120]})
     except Exception:
         pass
