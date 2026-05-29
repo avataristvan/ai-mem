@@ -232,7 +232,7 @@ def install_mem_init_command():
 
 
 def install_reflect_command():
-    source = REPO_ROOT / "skills" / "reflect.md"
+    source = REPO_ROOT / "skills" / "examples" / "reflect.md"
     if not source.exists():
         print("   ⚠ skills/reflect.md not found, skipping /reflect install.")
         return
