@@ -233,3 +233,33 @@ def test_query_includes_filename_and_path(tmp_path: Path) -> None:
         q = c.kwargs.get("query") or (c.args[1] if len(c.args) > 1 else "")
         all_queries.append(q)
     assert any("server.py" in q for q in all_queries)
+
+
+# ---------------------------------------------------------------------------
+# 7. Configurable min_label_score is forwarded to query_uc.execute
+# ---------------------------------------------------------------------------
+
+def test_configured_min_label_score_forwarded(tmp_path: Path) -> None:
+    query_uc = MagicMock()
+    query_uc.execute.return_value = []
+    train_uc = MagicMock()
+    ctx = MagicMock()
+    ctx.collection = "global"
+
+    with (
+        patch.object(sys, "stdin", _payload()),
+        patch.object(hook, "DB_PATH", tmp_path),
+        patch.object(hook, "_build_deps", return_value=(query_uc, train_uc)),
+        patch.object(hook, "detect_repo_context", return_value=ctx),
+        patch.object(hook, "GLOBAL_COLLECTION", "global"),
+        patch.object(hook, "WORKSPACE_COLLECTION", "workspace"),
+        patch("ai_mem.posttool_hook._load_settings", return_value={"min_label_score": 0.75}),
+    ):
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        hook.main()
+
+    scores = [
+        c.kwargs.get("min_score_for_tracking")
+        for c in query_uc.execute.call_args_list
+    ]
+    assert all(s == 0.75 for s in scores), f"expected 0.75, got {scores}"

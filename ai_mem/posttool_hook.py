@@ -14,6 +14,7 @@ import sys
 import time
 from pathlib import Path
 
+from ai_mem.agent_context import _CONFIG_PATH, _load_settings
 from ai_mem.repo_context import GLOBAL_COLLECTION, WORKSPACE_COLLECTION, detect_repo_context
 
 DB_PATH = Path(os.environ.get("AI_MEM_PATH", Path.home() / ".local" / "share" / "ai-mem"))
@@ -34,14 +35,16 @@ def _build_deps():
     return query_uc, train_uc
 
 
-def _signal_collection(query_uc, train_uc, collection: str, query: str, now: float) -> None:
+def _signal_collection(
+    query_uc, train_uc, collection: str, query: str, now: float, min_label_score: float
+) -> None:
     """Query a collection (updating last_accessed_at) then run a train_step."""
     try:
         query_uc.execute(
             collection=collection,
             query=query,
             n_results=_QUERY_K,
-            min_score_for_tracking=_MIN_LABEL_SCORE,
+            min_score_for_tracking=min_label_score,
         )
     except Exception:
         return
@@ -64,6 +67,9 @@ def main():
     if not file_path or not DB_PATH.exists():
         return
 
+    settings = _load_settings(_CONFIG_PATH)
+    min_label_score = float(settings.get("min_label_score", _MIN_LABEL_SCORE))
+
     try:
         query_uc, train_uc = _build_deps()
     except Exception:
@@ -73,12 +79,12 @@ def main():
     query = f"{file_name} {file_path}"
     now = time.time()
 
-    _signal_collection(query_uc, train_uc, GLOBAL_COLLECTION, query, now)
+    _signal_collection(query_uc, train_uc, GLOBAL_COLLECTION, query, now, min_label_score)
 
     try:
         ctx = detect_repo_context()
         if ctx.collection not in (GLOBAL_COLLECTION, WORKSPACE_COLLECTION):
-            _signal_collection(query_uc, train_uc, ctx.collection, query, now)
+            _signal_collection(query_uc, train_uc, ctx.collection, query, now, min_label_score)
     except Exception:
         pass
 

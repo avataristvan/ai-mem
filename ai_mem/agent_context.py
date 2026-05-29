@@ -46,6 +46,21 @@ _BUILTIN_SIGNATURES: list[tuple[str, list[str]]] = [
 _BUILTIN_INJECT_AGENTS: frozenset[str] = frozenset({"general-purpose"})
 
 
+def _load_settings(path: Path = _CONFIG_PATH) -> dict:
+    """Load the ``settings:`` block from the YAML config.
+
+    Returns a plain dict (may be empty). Falls back to ``{}`` on any error —
+    missing file, missing key, absent pyyaml, or unexpected structure.
+    """
+    try:
+        import yaml  # pyyaml; optional dep
+        data: dict = yaml.safe_load(path.read_text()) or {}
+        value = data.get("settings") or {}
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+
 def _load_user_config(
     path: Path = _CONFIG_PATH,
 ) -> tuple[list[tuple[str, list[str]]], frozenset[str]]:

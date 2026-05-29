@@ -5,6 +5,7 @@
 # inject_agents: subagents that receive ai-mem context even when spawned
 #                (default built-ins: general-purpose)
 # signatures:    transcript markers used to identify agent type at session start
+# settings:      tunable hook parameters (all optional, fall back to defaults)
 
 inject_agents:
   # - my-custom-coder
@@ -14,3 +15,6 @@ signatures:
   #   markers:
   #     - "unique phrase from the agent's system prompt"
   #     - "another distinctive phrase"
+
+settings:
+  # min_label_score: 0.50   # [0.0–1.0] posttool_hook label threshold

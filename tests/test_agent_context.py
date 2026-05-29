@@ -10,6 +10,7 @@ from ai_mem.agent_context import (
     AgentContext,
     _BUILTIN_SIGNATURES,
     _BUILTIN_INJECT_AGENTS,
+    _load_settings,
     _load_user_config,
     detect_for_hook,
     detect_for_session_start,
@@ -288,3 +289,45 @@ class TestLoadUserConfig:
         assert "my-agent" in merged_inject
         assert any(name == "my-agent" for name, _ in merged_sigs)
         assert all(name != "my-agent" for name, _ in _BUILTIN_SIGNATURES)
+
+
+# ---------------------------------------------------------------------------
+# _load_settings
+# ---------------------------------------------------------------------------
+
+class TestLoadSettings:
+    def test_valid_yaml_with_settings_key(self, tmp_path):
+        cfg = tmp_path / "agents.yaml"
+        cfg.write_text("settings:\n  min_label_score: 0.75\n")
+        result = _load_settings(cfg)
+        assert result == {"min_label_score": 0.75}
+
+    def test_missing_settings_key_returns_empty(self, tmp_path):
+        cfg = tmp_path / "agents.yaml"
+        cfg.write_text("inject_agents:\n  - my-agent\n")
+        result = _load_settings(cfg)
+        assert result == {}
+
+    def test_missing_file_returns_empty(self, tmp_path):
+        result = _load_settings(tmp_path / "nonexistent.yaml")
+        assert result == {}
+
+    def test_settings_wrong_type_returns_empty(self, tmp_path):
+        # settings: is a scalar instead of a dict — must not crash
+        cfg = tmp_path / "agents.yaml"
+        cfg.write_text("settings: not-a-dict\n")
+        result = _load_settings(cfg)
+        assert result == {}
+
+    def test_empty_file_returns_empty(self, tmp_path):
+        cfg = tmp_path / "agents.yaml"
+        cfg.write_text("")
+        result = _load_settings(cfg)
+        assert result == {}
+
+    def test_multiple_settings_keys(self, tmp_path):
+        cfg = tmp_path / "agents.yaml"
+        cfg.write_text("settings:\n  min_label_score: 0.30\n  other_key: hello\n")
+        result = _load_settings(cfg)
+        assert result["min_label_score"] == 0.30
+        assert result["other_key"] == "hello"
