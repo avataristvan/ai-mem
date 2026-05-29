@@ -8,6 +8,22 @@ from ai_mem.domain.memory import QueryResult
 # drowning out cosine similarity in the learned ranker's feature vector.
 _ACCESS_COUNT_CAP = 50
 
+# Cold-start analysis — new entries (access_count=0, age_days≈0):
+#
+# NullRanker:  score = cosine + 0.15/sqrt(max(1,0)) = cosine + 0.15 (maximum bonus).
+#              Cold-start is handled correctly; no issue.
+#
+# TorchMicroRanker: as_vector() = [cosine, 0, 0, 0, 1.0, 0, 0, 0, 0]
+#   Index 4 (is_never_accessed=1.0) is a clean binary signal that distinguishes
+#   new entries from all others; the MLP can learn to boost new entries from it.
+#   Random initial weights apply the same transformation to all candidates — they
+#   don't systematically penalise new entries relative to accessed ones.
+#   Pre-filtering to 50 semantic candidates before ranking limits impact further.
+#
+# Proposed access_count prior (max(1, raw_count)) would zero is_never_accessed for
+# new entries, collapsing them onto once-accessed entries — strictly worse signal.
+# The current feature design is correct; no cold-start fix is needed.
+
 
 class BuildFeaturesUseCase:
     def execute(
