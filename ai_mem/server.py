@@ -12,6 +12,7 @@ from mcp.server.stdio import stdio_server
 
 from ai_mem.application.add_edge import AddEdgeUseCase
 from ai_mem.application.add_memory import AddMemoryUseCase
+from ai_mem.application.boost_confidence import BoostConfidenceUseCase
 from ai_mem.application.build_features import BuildFeaturesUseCase
 from ai_mem.application.cleanup_memory import CleanupMemoryUseCase
 from ai_mem.application.delete_memory import DeleteMemoryUseCase
@@ -309,6 +310,24 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["entry_id"],
             },
         ),
+        types.Tool(
+            name="mem_boost",
+            description=(
+                "Apply a confidence delta to existing memory entries. "
+                "Use in /reflect to boost entries that proved crucial in a session (+0.1), "
+                "or to decay entries that turned out misleading (-0.1). "
+                "Entries not found are silently skipped. Delta is clamped to keep confidence in [0.0, 1.0]."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "ids": {"type": "array", "items": {"type": "string"}, "description": "Entry IDs to boost or decay"},
+                    "delta": {"type": "number", "description": "Confidence delta, e.g. 0.1 for boost, -0.1 for decay"},
+                    "collection": {"type": "string", "description": f"Collection name (default: '{DEFAULT_COLLECTION}')"},
+                },
+                "required": ["ids", "delta"],
+            },
+        ),
     ]
 
 
@@ -553,6 +572,13 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         )
         out = [{"target_id": e.target_id, "edge_type": e.edge_type} for e in edges]
         return [types.TextContent(type="text", text=json.dumps(out, indent=2))]
+
+    if name == "mem_boost":
+        col = arguments.get("collection") or DEFAULT_COLLECTION
+        ids = arguments["ids"]
+        delta = float(arguments["delta"])
+        n = BoostConfidenceUseCase(_repo).execute(col, ids, delta)
+        return [types.TextContent(type="text", text=f"Boosted {n} entr{'y' if n == 1 else 'ies'} in '{col}'.")]
 
     raise ValueError(f"Unknown tool: {name}")
 
