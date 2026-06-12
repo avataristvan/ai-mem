@@ -38,6 +38,9 @@ Restart your AI tool after installation. For the adaptive re-ranker (optional):
 pip install -e ".[ml]"   # requires PyTorch
 ```
 
+> **First steps:** Run `/mem-init` in your project directory, then `/reflect` after every task.
+> Storage alone doesn't make ai-mem useful — the reflect ritual is what closes the loop.
+
 ## Tools
 
 | Tool | Description |

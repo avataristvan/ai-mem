@@ -218,6 +218,12 @@ Initialize or update the ai-mem memory for the current project scope.
 
 6. Confirm: "Done. Memory initialized for 'repo.<scope>'. Re-run /mem-init after major structural changes."
 
+7. Close with this reminder:
+   "One more thing: run /reflect after every task you complete. That closes the
+   Plan → Code → Reflect loop and is the actual core of ai-mem — without it,
+   ai-mem is just a database. With /reflect, the agent accumulates structured
+   experience across sessions and builds progressively better context."
+
 To set a global focus (surfaced in every session across all repos):
   Call mem_add with ids=["current_focus"] and collection="global".
 """
