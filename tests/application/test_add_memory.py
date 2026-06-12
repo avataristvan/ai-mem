@@ -51,3 +51,38 @@ def test_readd_preserves_access_history(tmp_repo):
     assert after.metadata["created_at"] == before["created_at"]
     assert after.metadata["last_accessed_at"] == before["last_accessed_at"]
     assert after.metadata["access_count"] == 2
+
+
+def test_confidence_defaults_to_1_on_new_entry(tmp_repo):
+    AddMemoryUseCase(tmp_repo).execute(collection="test_col", documents=["x"], ids=["a"])
+    meta = GetMemoryUseCase(tmp_repo).execute("test_col", ["a"])[0].metadata
+    assert meta["confidence"] == 1.0
+
+
+def test_confidence_explicit_value_stored(tmp_repo):
+    AddMemoryUseCase(tmp_repo).execute(
+        collection="test_col", documents=["x"], ids=["a"],
+        metadatas=[{"confidence": 0.6}],
+    )
+    meta = GetMemoryUseCase(tmp_repo).execute("test_col", ["a"])[0].metadata
+    assert meta["confidence"] == 0.6
+
+
+def test_confidence_delta_applied_and_clamped(tmp_repo):
+    add = AddMemoryUseCase(tmp_repo)
+    get = GetMemoryUseCase(tmp_repo)
+
+    add.execute(collection="test_col", documents=["x"], ids=["a"], metadatas=[{"confidence": 0.5}])
+
+    add.execute(collection="test_col", documents=["x"], ids=["a"], metadatas=[{"confidence_delta": 0.3}])
+    meta = get.execute("test_col", ["a"])[0].metadata
+    assert abs(meta["confidence"] - 0.8) < 1e-9
+    assert "confidence_delta" not in meta
+
+    add.execute(collection="test_col", documents=["x"], ids=["a"], metadatas=[{"confidence_delta": 0.5}])
+    meta = get.execute("test_col", ["a"])[0].metadata
+    assert meta["confidence"] == 1.0
+
+    add.execute(collection="test_col", documents=["x"], ids=["a"], metadatas=[{"confidence_delta": -1.5}])
+    meta = get.execute("test_col", ["a"])[0].metadata
+    assert meta["confidence"] == 0.0

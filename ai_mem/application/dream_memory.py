@@ -187,6 +187,64 @@ def _collection_context(collections: list[str]) -> str:
     return _COLLECTION_CONTEXT.format(collections="\n".join(f"  - {c}" for c in collections))
 
 
+def _confidence_report(entries: list[MemoryEntry]) -> str:
+    """Return a markdown report of decay and promotion candidates based on confidence metadata.
+
+    Entries without a 'confidence' field are silently skipped.
+    Returns an empty string when no candidates exist in either category.
+    """
+    decay: list[tuple[str, str, float, int]] = []    # (id, collection, confidence, access_count)
+    promote: list[tuple[str, str, float, int, str]] = []  # (id, collection, confidence, access_count, type)
+
+    for e in entries:
+        raw = e.metadata.get("confidence")
+        if raw is None:
+            continue
+        try:
+            conf = float(raw)
+        except (ValueError, TypeError):
+            continue
+
+        col = e.metadata.get("_collection", "?")
+        ac = int(e.metadata.get("access_count", 0))
+        entry_type = str(e.metadata.get("type", ""))
+
+        if conf < 0.3:
+            decay.append((e.id, col, conf, ac))
+        if conf > 0.9 and ac >= 3:
+            promote.append((e.id, col, conf, ac, entry_type))
+
+    if not decay and not promote:
+        return ""
+
+    sections: list[str] = ["---", "", "## Confidence Report"]
+
+    if decay:
+        sections += [
+            "",
+            "### Decay Candidates",
+            "",
+            "Consider DELETE or mem-dream review:",
+            "",
+        ]
+        for eid, col, conf, ac in decay:
+            sections.append(f"- `{eid}` ({col}) — confidence={conf:.2f}, access_count={ac}")
+
+    if promote:
+        sections += [
+            "",
+            "### Promotion Candidates",
+            "",
+            "Consider promoting to CLAUDE.md (stable, frequently accessed):",
+            "",
+        ]
+        for eid, col, conf, ac, etype in promote:
+            type_tag = f", type={etype}" if etype else ""
+            sections.append(f"- `{eid}` ({col}) — confidence={conf:.2f}, access_count={ac}{type_tag}")
+
+    return "\n" + "\n".join(sections)
+
+
 def _propagation_candidates(synthesis: str, source_collections: set[str]) -> list[tuple[str, str]]:
     """Return (entry_id, target_collection) pairs where target differs from all source collections."""
     candidates = []
@@ -251,6 +309,10 @@ class DreamMemoryUseCase:
                 "These ADD proposals target a higher-level collection "
                 "(review and apply with `mem_add` if confirmed):\n\n" + lines
             )
+
+        conf_report = _confidence_report(all_entries)
+        if conf_report:
+            report += "\n\n" + conf_report
 
         if auto_delete:
             deleted = self._auto_apply_deletes(synthesis, all_entries)

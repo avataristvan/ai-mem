@@ -6,6 +6,7 @@ import json
 from ai_mem.application.dream_memory import (
     _ADD_TARGET_RE,
     _TYPE_RULES,
+    _confidence_report,
     _format_entries,
     _propagation_candidates,
 )
@@ -169,3 +170,85 @@ class TestPropagationCandidates:
         synthesis = "- ADD entry_x [target=  global  ]: content"
         result = _propagation_candidates(synthesis, {"repo.ai-mem"})
         assert result == [("entry_x", "global")]
+
+
+# ── _confidence_report ────────────────────────────────────────────────────────
+
+class TestConfidenceReport:
+    def test_empty_when_no_entries_have_confidence(self):
+        entries = [_entry("e1", "text", access_count=5, type="pattern")]
+        assert _confidence_report(entries) == ""
+
+    def test_empty_when_no_candidates_in_either_category(self):
+        entries = [_entry("e1", "text", confidence=0.5, access_count=1)]
+        assert _confidence_report(entries) == ""
+
+    def test_decay_candidate_below_threshold(self):
+        entries = [_entry("low_conf", "stale text", confidence=0.1, access_count=0, collection="repo.x")]
+        out = _confidence_report(entries)
+        assert "Decay Candidates" in out
+        assert "`low_conf`" in out
+        assert "confidence=0.10" in out
+        assert "access_count=0" in out
+        assert "Consider DELETE or mem-dream review" in out
+
+    def test_promotion_candidate_above_threshold_with_enough_access(self):
+        entries = [_entry("high_conf", "stable rule", confidence=0.95, access_count=5, type="pattern", collection="repo.x")]
+        out = _confidence_report(entries)
+        assert "Promotion Candidates" in out
+        assert "`high_conf`" in out
+        assert "confidence=0.95" in out
+        assert "access_count=5" in out
+        assert "type=pattern" in out
+        assert "Consider promoting to CLAUDE.md" in out
+
+    def test_promotion_requires_access_count_ge_3(self):
+        entries = [_entry("almost", "text", confidence=0.95, access_count=2)]
+        assert _confidence_report(entries) == ""
+
+    def test_boundary_confidence_exactly_0_3_is_not_decay(self):
+        entries = [_entry("boundary", "text", confidence=0.3, access_count=0)]
+        assert _confidence_report(entries) == ""
+
+    def test_boundary_confidence_exactly_0_9_is_not_promotion(self):
+        entries = [_entry("boundary", "text", confidence=0.9, access_count=5)]
+        assert _confidence_report(entries) == ""
+
+    def test_entry_without_confidence_is_skipped(self):
+        entries = [
+            _entry("no_conf", "text", access_count=10),
+            _entry("has_conf", "text", confidence=0.1, access_count=0),
+        ]
+        out = _confidence_report(entries)
+        assert "`no_conf`" not in out
+        assert "`has_conf`" in out
+
+    def test_decay_section_absent_when_only_promotion(self):
+        entries = [_entry("promo", "text", confidence=0.99, access_count=10)]
+        out = _confidence_report(entries)
+        assert "Promotion Candidates" in out
+        assert "Decay Candidates" not in out
+
+    def test_promotion_section_absent_when_only_decay(self):
+        entries = [_entry("decay", "text", confidence=0.05, access_count=0)]
+        out = _confidence_report(entries)
+        assert "Decay Candidates" in out
+        assert "Promotion Candidates" not in out
+
+    def test_both_sections_present_when_mixed(self):
+        entries = [
+            _entry("decay_one", "text", confidence=0.1, access_count=0),
+            _entry("promo_one", "text", confidence=0.95, access_count=4),
+        ]
+        out = _confidence_report(entries)
+        assert "Decay Candidates" in out
+        assert "Promotion Candidates" in out
+
+    def test_invalid_confidence_value_is_skipped(self):
+        entries = [_entry("bad", "text", confidence="not-a-number", access_count=0)]
+        assert _confidence_report(entries) == ""
+
+    def test_promotion_without_type_omits_type_tag(self):
+        entries = [_entry("promo", "text", confidence=0.95, access_count=5)]
+        out = _confidence_report(entries)
+        assert "type=" not in out
