@@ -77,6 +77,30 @@ Skip if the user has nothing to add.
 
 ---
 
+## Step 3.1 — Confidence Boost
+
+Schau zurück auf die Session: welche aus dem Kontext-Hook eingespielten Memories waren **entscheidend** — haben eine Entscheidung verändert, einen Fehler verhindert, oder nicht-offensichtlichen Kontext geliefert?
+
+Für jede entscheidende Memory:
+
+```
+mem_boost(
+    ids=["<memory_id>"],
+    collection=<active>,
+    delta=0.1,
+)
+```
+
+War eine Memory falsch oder irreführend? Dann decay statt boost:
+
+```
+mem_boost(ids=["<memory_id>"], collection=<active>, delta=-0.1)
+```
+
+Die Memory-IDs stehen im `[ai-mem]`-Kontext vom Session-Start. Überspring diesen Schritt still wenn keine Memories eingespielt wurden oder keine davon den Unterschied gemacht hat.
+
+---
+
 ## Step 3.5 — Feedback signal
 
 **Outdated or misleading entries (always, no commit needed)**
