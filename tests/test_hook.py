@@ -43,6 +43,14 @@ def _make_entry(id: str, text: str) -> MagicMock:
     return e
 
 
+def _make_mem_entry(id: str, text: str, confidence: float = 1.0, access_count: int = 0) -> MagicMock:
+    e = MagicMock()
+    e.id = id
+    e.text = text
+    e.metadata = {"confidence": str(confidence), "access_count": str(access_count)}
+    return e
+
+
 def _run_main(
     tmp_path: Path,
     agent_type: str | None = None,
@@ -53,6 +61,7 @@ def _run_main(
     session_delta: int | None = None,
     git_commits: list[str] | None = None,
     expert_query_results: list | None = None,
+    high_confidence_entries: list | None = None,
 ) -> str:
     """Run hook.main() with mocked dependencies; return captured stdout.
 
@@ -98,6 +107,7 @@ def _run_main(
         patch.object(hook, "GLOBAL_COLLECTION", "global"),
         patch.object(hook, "WORKSPACE_COLLECTION", "workspace"),
         patch.object(hook, "ListCollectionsUseCase", mock_list_uc),
+        patch.object(hook, "_high_confidence_entries", return_value=high_confidence_entries or []),
     ):
         tmp_path.mkdir(parents=True, exist_ok=True)
         captured: list[str] = []
@@ -362,3 +372,66 @@ def test_no_git_commits_suppresses_block(tmp_path: Path) -> None:
     parsed = json.loads(out)
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
     assert "Git commits since last session" not in ctx
+
+
+# ---------------------------------------------------------------------------
+# 13. High-confidence proactive injection ([always-present] block)
+# ---------------------------------------------------------------------------
+
+def test_high_confidence_entries_appear_in_always_present_block(tmp_path: Path) -> None:
+    entry = _make_mem_entry("pattern_ddd", "Always push domain logic down, never let infra leak upward.")
+    out = _run_main(
+        tmp_path,
+        focus_map={"global": "global mem"},
+        repo_collection="repo.ai-mem",
+        high_confidence_entries=[entry],
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "[always-present]" in ctx
+    assert "Always push domain logic down" in ctx
+
+
+def test_no_always_present_block_when_high_confidence_empty(tmp_path: Path) -> None:
+    out = _run_main(
+        tmp_path,
+        focus_map={"global": "global mem"},
+        repo_collection="repo.ai-mem",
+        high_confidence_entries=[],
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "[always-present]" not in ctx
+
+
+def test_always_present_block_skipped_for_workspace_collection(tmp_path: Path) -> None:
+    entry = _make_mem_entry("pattern_x", "This should not appear.")
+    out = _run_main(
+        tmp_path,
+        focus_map={"global": "global mem"},
+        repo_collection="workspace",
+        high_confidence_entries=[entry],
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "[always-present]" not in ctx
+
+
+def test_always_present_text_truncated_to_high_confidence_chars(tmp_path: Path) -> None:
+    long_text = "B" * 500  # well beyond _HIGH_CONFIDENCE_CHARS = 300
+    entry = _make_mem_entry("pattern_long", long_text)
+    out = _run_main(
+        tmp_path,
+        focus_map={"global": "global mem"},
+        repo_collection="repo.ai-mem",
+        high_confidence_entries=[entry],
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "[always-present]" in ctx
+    assert long_text not in ctx
+    assert "BBBB…" in ctx

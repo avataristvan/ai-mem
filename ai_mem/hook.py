@@ -34,6 +34,10 @@ _SESSION_START_FILE = DB_PATH / "session_start.txt"
 _PREV_SESSION_MAX_AGE_DAYS = 7
 _FOCUS_PREVIEW_CHARS = 150
 _GIT_COMMITS_MAX = 5
+_HIGH_CONFIDENCE_THRESHOLD = 0.9
+_HIGH_CONFIDENCE_MIN_ACCESS = 3
+_HIGH_CONFIDENCE_MAX = 3
+_HIGH_CONFIDENCE_CHARS = 300
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -93,6 +97,27 @@ def _focus_text(get_memory, collection: str) -> str | None:
         return entries[0].text if entries and entries[0].text else None
     except Exception:
         return None
+
+
+def _high_confidence_entries(repo, collection: str, exclude_ids: set[str]) -> list:
+    """Return entries with confidence > threshold and enough access history, sorted by confidence desc."""
+    try:
+        all_entries = repo.get_all(collection)
+        candidates = []
+        for e in all_entries:
+            if e.id in exclude_ids:
+                continue
+            try:
+                conf = float(e.metadata.get("confidence", 0.0))
+            except (ValueError, TypeError):
+                continue
+            ac = int(e.metadata.get("access_count", 0))
+            if conf > _HIGH_CONFIDENCE_THRESHOLD and ac >= _HIGH_CONFIDENCE_MIN_ACCESS:
+                candidates.append((conf, e))
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        return [e for _, e in candidates[:_HIGH_CONFIDENCE_MAX]]
+    except Exception:
+        return []
 
 
 _RANKER_MIN_LABELED = 10  # mirrors MIN_LABELED_EXAMPLES in userprompt_hook.py
@@ -195,6 +220,14 @@ def main():
                 f'Expert collection: "subagent.{agent_type}". '
                 f'Store cross-project learnings there with collection="subagent.{agent_type}".'
             )
+        if ctx.collection != WORKSPACE_COLLECTION:
+            _hc_exclude = {FOCUS_ID}
+            _hc_entries = _high_confidence_entries(repo, ctx.collection, _hc_exclude)
+            if _hc_entries:
+                parts.append(
+                    "[always-present]\n"
+                    + "\n".join(f"- {_truncate(e.text, _HIGH_CONFIDENCE_CHARS)}" for e in _hc_entries)
+                )
         if ctx.has_claude_md:
             parts.append(
                 f'Active collection: "{ctx.collection}". '
