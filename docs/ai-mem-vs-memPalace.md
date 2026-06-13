@@ -1,6 +1,6 @@
 # ai-mem vs. the Field — Competitive Landscape
 
-Last updated: 2026-05-11. Based on direct research of active Claude Code memory tools.
+Last updated: 2026-06-13. Based on direct research of active Claude Code memory tools.
 
 ---
 
@@ -45,7 +45,7 @@ Universal memory infrastructure, not Claude-specific. Backend: Supabase (Postgre
 |---|---|---|---|---|---|
 | Vector store | ChromaDB | ChromaDB (pluggable) | ChromaDB + SQLite | SQLite-vec / Milvus | PostgreSQL + pgvector |
 | Hybrid retrieval | BM25 + cosine | Vector + keyword + temporal | FTS5 + cosine | RRF (BM25 + vector) | Vector only |
-| Adaptive ranker | TorchMicroRanker (MLP) | — | — | — | — |
+| Confidence lifecycle | confidence 0.0–1.0, [always-present] gate, dream decay | — | — | — | — |
 | Lifecycle hooks | 5 (incl. PostToolUse) | 2 | 5 | Plugin hooks (dev) | — |
 | Consolidation | mem_dream (Claude API) | — | AI compression | Local LLM | — |
 | Memory hierarchy | global → workspace → repo | Wings > Rooms > Drawers | Session-centric | tags/entities | Table schema |
@@ -94,5 +94,5 @@ This is a philosophical choice, not a technical limitation. Both approaches are 
 
 ## Ideas Adopted from Competitors
 
-- **PostToolUse passive training signal** — inspired by claude-mem's aggressive PostToolUse capture. ai-mem's version is lighter: instead of queuing all tool uses for compression, it simply queries memory with the edited file path to update `last_accessed_at`, letting the 7-day label window do the work.
+- **PostToolUse access tracking** — inspired by claude-mem's aggressive PostToolUse capture. ai-mem's version is lighter: instead of queuing all tool uses for compression, it simply queries memory with the edited file path to update `last_accessed_at` and `access_count`.
 - **Causal edge graph** — inspired by mcp-memory-service's typed-edge knowledge graph. ai-mem's implementation stores edges as JSON-string in ChromaDB metadata (no separate graph layer), keeping the infrastructure footprint minimal.
