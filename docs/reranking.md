@@ -11,7 +11,7 @@ ai-mem tracks the epistemic status of each entry via a `confidence` field (float
 | Write | New entry created | `confidence = 0.7` |
 | Boost | `/reflect` confirms entry was decisive | `mem_boost(delta=+0.1)` |
 | Decay | Dream cycle flags it as stale | `mem_boost(delta=-0.1)` |
-| Always-present | `confidence > 0.9` AND `access_count ≥ 3` | Injected at every `SessionStart` |
+| Always-present | `confidence > 0.9` AND `access_count ≥ 3` AND `boost_count ≥ 1` | Injected at every `SessionStart` |
 | Decay candidate | `confidence < 0.3` | Flagged in `mem_dream` report |
 | Promotion candidate | `confidence > 0.9` AND `access_count ≥ 3` | Flagged in `mem_dream` report for CLAUDE.md |
 
@@ -32,10 +32,11 @@ Called by `/reflect` Step 3.1 for entries that were decisive in the session.
 
 ## [always-present] injection
 
-`hook.py` scans the active collection at session start. Entries meeting the gate (`confidence > 0.9`, `access_count ≥ 3`) are embedded directly in the `additionalContext` block, independent of any query.
+`hook.py` scans the active collection at session start. Entries meeting the gate (`confidence > 0.9`, `access_count ≥ 3`, `boost_count ≥ 1`) are embedded directly in the `additionalContext` block, independent of any query.
 
 Constants (in `hook.py`):
 - `_HIGH_CONFIDENCE_THRESHOLD = 0.9`
 - `_HIGH_CONFIDENCE_MIN_ACCESS = 3`
+- `_HIGH_CONFIDENCE_MIN_BOOSTS = 1` (must have been explicitly boosted at least once via /reflect)
 - `_HIGH_CONFIDENCE_MAX = 3` (max entries injected)
 - `_HIGH_CONFIDENCE_CHARS = 300` (truncation limit per entry)

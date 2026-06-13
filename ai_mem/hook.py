@@ -36,6 +36,7 @@ _FOCUS_PREVIEW_CHARS = 150
 _GIT_COMMITS_MAX = 5
 _HIGH_CONFIDENCE_THRESHOLD = 0.9
 _HIGH_CONFIDENCE_MIN_ACCESS = 3
+_HIGH_CONFIDENCE_MIN_BOOSTS = 1
 _HIGH_CONFIDENCE_MAX = 3
 _HIGH_CONFIDENCE_CHARS = 300
 
@@ -112,7 +113,8 @@ def _high_confidence_entries(repo, collection: str, exclude_ids: set[str]) -> li
             except (ValueError, TypeError):
                 continue
             ac = int(e.metadata.get("access_count", 0))
-            if conf > _HIGH_CONFIDENCE_THRESHOLD and ac >= _HIGH_CONFIDENCE_MIN_ACCESS:
+            bc = int(e.metadata.get("boost_count", 0))
+            if conf > _HIGH_CONFIDENCE_THRESHOLD and ac >= _HIGH_CONFIDENCE_MIN_ACCESS and bc >= _HIGH_CONFIDENCE_MIN_BOOSTS:
                 candidates.append((conf, e))
         candidates.sort(key=lambda x: x[0], reverse=True)
         return [e for _, e in candidates[:_HIGH_CONFIDENCE_MAX]]

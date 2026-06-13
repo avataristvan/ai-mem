@@ -23,6 +23,9 @@ class BoostConfidenceUseCase:
             prior = float(entry.metadata.get("confidence", 1.0))
             new_confidence = max(0.0, min(1.0, prior + delta))
             entry.metadata["confidence"] = new_confidence
+            prior_boosts = int(entry.metadata.get("boost_count", 0))
+            if delta > 0:
+                entry.metadata["boost_count"] = prior_boosts + 1
             updated.append(entry)
 
         self._repo.upsert(collection, updated)

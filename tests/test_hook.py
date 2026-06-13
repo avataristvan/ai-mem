@@ -43,11 +43,11 @@ def _make_entry(id: str, text: str) -> MagicMock:
     return e
 
 
-def _make_mem_entry(id: str, text: str, confidence: float = 1.0, access_count: int = 0) -> MagicMock:
+def _make_mem_entry(id: str, text: str, confidence: float = 1.0, access_count: int = 0, boost_count: int = 0) -> MagicMock:
     e = MagicMock()
     e.id = id
     e.text = text
-    e.metadata = {"confidence": str(confidence), "access_count": str(access_count)}
+    e.metadata = {"confidence": str(confidence), "access_count": str(access_count), "boost_count": str(boost_count)}
     return e
 
 
@@ -380,9 +380,9 @@ def test_high_confidence_gate_excludes_low_confidence_entry() -> None:
 
 
 def test_high_confidence_gate_passes_for_qualifying_entry() -> None:
-    """confidence=0.95 + access_count=3 must pass the gate."""
+    """confidence=0.95 + access_count=3 + boost_count=1 must pass the gate."""
     mock_repo = MagicMock()
-    entry = _make_mem_entry("pattern_x", "Qualifying entry.", confidence=0.95, access_count=3)
+    entry = _make_mem_entry("pattern_x", "Qualifying entry.", confidence=0.95, access_count=3, boost_count=1)
     mock_repo.get_all.return_value = [entry]
 
     result = hook._high_confidence_entries(mock_repo, "repo.ai-mem", exclude_ids=set())
@@ -400,6 +400,29 @@ def test_high_confidence_gate_excludes_insufficient_access_count() -> None:
     result = hook._high_confidence_entries(mock_repo, "repo.ai-mem", exclude_ids=set())
 
     assert result == []
+
+
+def test_high_confidence_gate_excludes_zero_boost_count() -> None:
+    """confidence=0.95 + access_count=3 + boost_count=0 must NOT pass (must be explicitly boosted)."""
+    mock_repo = MagicMock()
+    entry = _make_mem_entry("pattern_z", "Old entry never boosted.", confidence=0.95, access_count=3, boost_count=0)
+    mock_repo.get_all.return_value = [entry]
+
+    result = hook._high_confidence_entries(mock_repo, "repo.ai-mem", exclude_ids=set())
+
+    assert result == []
+
+
+def test_high_confidence_gate_passes_with_boost_count_one() -> None:
+    """confidence=0.95 + access_count=3 + boost_count=1 must pass."""
+    mock_repo = MagicMock()
+    entry = _make_mem_entry("pattern_w", "Boosted entry.", confidence=0.95, access_count=3, boost_count=1)
+    mock_repo.get_all.return_value = [entry]
+
+    result = hook._high_confidence_entries(mock_repo, "repo.ai-mem", exclude_ids=set())
+
+    assert len(result) == 1
+    assert result[0].id == "pattern_w"
 
 
 def test_always_present_text_truncated_to_high_confidence_chars(tmp_path: Path) -> None:
