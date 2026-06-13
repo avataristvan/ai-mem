@@ -9,6 +9,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.resolve()
 HOME = Path.home()
 SERVER_MODULE = "ai_mem.server"
+DB_PATH = Path(
+    __import__("os").environ.get("AI_MEM_PATH", str(HOME / ".local" / "share" / "ai-mem"))
+)
+MIGRATIONS_DIR = DB_PATH / ".migrations"
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -132,7 +136,6 @@ def register_claude():
         "mcp__ai-mem__mem_dream",
         "mcp__ai-mem__mem_split",
         "mcp__ai-mem__mem_cleanup",
-        "mcp__ai-mem__mem_train",
         "Bash(mem-dream *)",
     ]
 
@@ -250,6 +253,35 @@ def install_reflect_command():
     print(f"   ✓ /reflect command installed at {target}")
 
 
+def run_pending_migrations():
+    """Run one-time data migrations that have not yet been applied to this installation."""
+    sentinel = MIGRATIONS_DIR / "boost_count_v1.done"
+    if sentinel.exists():
+        return
+
+    migration_script = REPO_ROOT / "scripts" / "migrate_boost_count.py"
+    if not migration_script.exists():
+        return
+
+    if not DB_PATH.exists():
+        MIGRATIONS_DIR.mkdir(parents=True, exist_ok=True)
+        sentinel.touch()
+        return
+
+    print("\n🔄 Running one-time migration: boost_count_v1...")
+    result = subprocess.run(
+        [python_exe(), str(migration_script)],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        MIGRATIONS_DIR.mkdir(parents=True, exist_ok=True)
+        sentinel.touch()
+        summary = [l for l in result.stdout.splitlines() if l.strip() and not l.startswith("  ")]
+        print(f"   ✓ {summary[-1] if summary else 'Done.'}")
+    else:
+        print(f"   ⚠ Migration failed (non-fatal): {result.stderr.strip()[:120]}")
+
+
 def register_gemini():
     """Add ai-mem to ~/.gemini/settings.json mcpServers."""
     config_path = HOME / ".gemini" / "settings.json"
@@ -326,6 +358,7 @@ def main():
     print("=" * 50)
 
     install_package()
+    run_pending_migrations()
 
     targets = prompt_targets()
     for label, register_fn in targets:
