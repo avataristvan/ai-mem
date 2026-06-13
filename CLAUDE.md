@@ -31,3 +31,4 @@ Things that will bite you in the first hour:
 - `userprompt_hook.py` context injection fires whenever a result score ≥ `CONTEXT_MIN_SCORE = 0.3`. No ranker calibration gate — removed in 2026-06.
 - `_hook_deps.py` exposes `_build_query_uc(db_path, with_bm25)` — the single assembly point for hooks. `posttool_hook` passes `with_bm25=False`; `userprompt_hook` passes `True`.
 - The ML ranker (`TorchMicroRanker`, `RankerRegistry`) was removed in 2026-06. No `[ml]` extra or `torch` dependency remains.
+- `[always-present]` gate requires `confidence > 0.9` AND `access_count ≥ 3` AND `boost_count ≥ 1`. Entries without an explicit `/reflect` boost never qualify — regardless of age or access count. Existing high-value entries from before the confidence system need a one-time `mem_boost` to re-qualify.
