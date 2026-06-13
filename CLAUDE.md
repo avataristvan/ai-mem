@@ -7,7 +7,6 @@ Agent-facing supplement to README.md. Dev commands and critical contributor gotc
 ```bash
 pip install -e .            # editable install (no ML, no BM25)
 pip install -e ".[hybrid]"  # with BM25 hybrid search
-pip install -e ".[ml]"      # with PyTorch re-ranker
 pip install -e ".[dream]"   # with Anthropic SDK for mem-dream
 pip install -e ".[config]"  # with pyyaml for agents.yaml support
 python3 -m ai_mem.server    # run MCP server directly
@@ -31,4 +30,4 @@ Things that will bite you in the first hour:
 - `QueryMemoryUseCase` takes only `(repo, track_access)` — no ranker, no build_features. ChromaDB returns results in cosine order; no re-ranking needed.
 - `userprompt_hook.py` context injection fires whenever a result score ≥ `CONTEXT_MIN_SCORE = 0.3`. No ranker calibration gate — removed in 2026-06.
 - `_hook_deps.py` exposes `_build_query_uc(db_path, with_bm25)` — the single assembly point for hooks. `posttool_hook` passes `with_bm25=False`; `userprompt_hook` passes `True`.
-- The `[ml]` pip extra and `pip install -e ".[ml]"` command in the dev section are vestigial — no ML ranker code remains. The extra may still exist in `setup.cfg`/`pyproject.toml` but does nothing.
+- The ML ranker (`TorchMicroRanker`, `RankerRegistry`) was removed in 2026-06. No `[ml]` extra or `torch` dependency remains.

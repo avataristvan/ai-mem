@@ -32,12 +32,6 @@ cd ai-mem
 python3 install.py
 ```
 
-Restart your AI tool after installation. For the adaptive re-ranker (optional):
-
-```bash
-pip install -e ".[ml]"   # requires PyTorch
-```
-
 > **First steps:** Run `/mem-init` in your project directory, then `/reflect` after every task.
 > Storage alone doesn't make ai-mem useful — the reflect ritual is what closes the loop.
 
@@ -115,25 +109,6 @@ mem_edges(entry_id="pattern_abc", collection="repo.my-project")
 # → [{"target_id": "antipattern_xyz", "edge_type": "contradicts"}]
 ```
 
-## Hybrid Ranker Mode
-
-Multiple collections can share one trained ranker — useful for related projects (e.g. a microservice cluster):
-
-```json
-// ~/.local/share/ai-mem/ranker_config.json
-{
-  "groups": [
-    {
-      "name": "work-services",
-      "collections": ["repo.payment-svc", "repo.order-svc", "repo.gateway"],
-      "mode": "hybrid"
-    }
-  ]
-}
-```
-
-Collections not listed are isolated (default). Restart the MCP server after editing.
-
 ## Configuration
 
 | Variable | Default | Description |
@@ -166,9 +141,9 @@ Three-layer capability-centric DDD — imports only flow downward.
 
 | Layer | Path | Role |
 |---|---|---|
-| Domain | `ai_mem/domain/` | Pure contracts (`MemoryRepository`, `LearnedRanker`, `TrainingBufferRepository` protocols). No I/O, no torch. |
-| Application | `ai_mem/application/` | One use case per file, single `execute()`, deps injected. `RankerRegistry` gates `TorchMicroRanker` behind `MIN_LABELED_EXAMPLES=10` — falls back to `NullRanker` until trained. |
-| Infrastructure | `ai_mem/infrastructure/` | `ChromaMemoryRepository`, `BM25MemoryRepository` (optional wrapper), `TorchMicroRanker` `[9→32→16→1]` MLP, `NullRanker` UCB fallback, `RankerStorage`. |
+| Domain | `ai_mem/domain/` | Pure contracts (`MemoryRepository` protocol). No I/O. |
+| Application | `ai_mem/application/` | One use case per file, single `execute()`, deps injected. |
+| Infrastructure | `ai_mem/infrastructure/` | `ChromaMemoryRepository`, `BM25MemoryRepository` (optional wrapper). |
 
 `server.py` is the adapter — wires use cases at module load, exposes MCP tools.
 
@@ -192,4 +167,3 @@ No reinstall needed — installed in editable mode.
 ## Requirements
 
 - Python 3.10+
-- PyTorch 2.0+ (optional, for `[ml]` extra)

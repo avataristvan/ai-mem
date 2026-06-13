@@ -368,6 +368,40 @@ def test_always_present_block_skipped_for_workspace_collection(tmp_path: Path) -
     assert "[always-present]" not in ctx
 
 
+def test_high_confidence_gate_excludes_low_confidence_entry() -> None:
+    """confidence=0.7 + access_count=3 must NOT pass the gate (threshold is > 0.9)."""
+    mock_repo = MagicMock()
+    entry = _make_mem_entry("candidate", "Should not appear.", confidence=0.7, access_count=3)
+    mock_repo.get_all.return_value = [entry]
+
+    result = hook._high_confidence_entries(mock_repo, "repo.ai-mem", exclude_ids=set())
+
+    assert result == []
+
+
+def test_high_confidence_gate_passes_for_qualifying_entry() -> None:
+    """confidence=0.95 + access_count=3 must pass the gate."""
+    mock_repo = MagicMock()
+    entry = _make_mem_entry("pattern_x", "Qualifying entry.", confidence=0.95, access_count=3)
+    mock_repo.get_all.return_value = [entry]
+
+    result = hook._high_confidence_entries(mock_repo, "repo.ai-mem", exclude_ids=set())
+
+    assert len(result) == 1
+    assert result[0].id == "pattern_x"
+
+
+def test_high_confidence_gate_excludes_insufficient_access_count() -> None:
+    """confidence=0.95 + access_count=2 must NOT pass (minimum is 3)."""
+    mock_repo = MagicMock()
+    entry = _make_mem_entry("pattern_y", "High confidence but few accesses.", confidence=0.95, access_count=2)
+    mock_repo.get_all.return_value = [entry]
+
+    result = hook._high_confidence_entries(mock_repo, "repo.ai-mem", exclude_ids=set())
+
+    assert result == []
+
+
 def test_always_present_text_truncated_to_high_confidence_chars(tmp_path: Path) -> None:
     long_text = "B" * 500  # well beyond _HIGH_CONFIDENCE_CHARS = 300
     entry = _make_mem_entry("pattern_long", long_text)
