@@ -25,9 +25,10 @@ mem-dream --expert          # consolidate all subagent.* collections with expert
 
 Things that will bite you in the first hour:
 
-- `TrainingExample` has **no `.label` attribute** — use `.target_future_access is not None` to check for a label. `.label` raises `AttributeError` silently caught by surrounding try/except, making labeled counts always 0.
 - Tests that call `upsert` directly must include non-empty metadata (ChromaDB rejects empty dicts). Use `AddMemoryUseCase` in tests — it always injects timestamps.
 - `posttool_hook.py` imports `GLOBAL_COLLECTION`, `WORKSPACE_COLLECTION`, and `detect_repo_context` at **module level** (not lazily inside `main()`) so tests can patch them via `patch.object`. Hooks that use lazy imports inside `main()` are not patchable at module scope.
-- `MIN_LABELED_EXAMPLES = 10` is defined in `ranker_registry.py` — that is the canonical source. `userprompt_hook.py` and `hook.py` import/mirror from there.
 - `mem_delete` with no `ids` drops the **entire collection**; repo signals this by returning `-1`.
-- `RankingFeatures.cosine_similarity` = `1 - chromadb_distance` (higher = more relevant). Never invert.
+- `QueryMemoryUseCase` takes only `(repo, track_access)` — no ranker, no build_features. ChromaDB returns results in cosine order; no re-ranking needed.
+- `userprompt_hook.py` context injection fires whenever a result score ≥ `CONTEXT_MIN_SCORE = 0.3`. No ranker calibration gate — removed in 2026-06.
+- `_hook_deps.py` exposes `_build_query_uc(db_path, with_bm25)` — the single assembly point for hooks. `posttool_hook` passes `with_bm25=False`; `userprompt_hook` passes `True`.
+- The `[ml]` pip extra and `pip install -e ".[ml]"` command in the dev section are vestigial — no ML ranker code remains. The extra may still exist in `setup.cfg`/`pyproject.toml` but does nothing.

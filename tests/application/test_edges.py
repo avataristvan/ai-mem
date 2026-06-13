@@ -7,15 +7,9 @@ import pytest
 
 from ai_mem.application.add_edge import AddEdgeUseCase
 from ai_mem.application.add_memory import AddMemoryUseCase
-from ai_mem.application.build_features import BuildFeaturesUseCase
 from ai_mem.application.get_edges import GetEdgesUseCase
 from ai_mem.application.query_memory import QueryMemoryUseCase
-from ai_mem.application.ranker_registry import RankerRegistry
 from ai_mem.application.track_access import TrackAccessUseCase
-from ai_mem.application.train_ranker import TrainRankerUseCase
-from ai_mem.domain.learning import RankerScope
-from ai_mem.infrastructure.null_ranker import NullRanker
-from ai_mem.infrastructure.ranker_storage import RankerStorage
 
 
 # ---------------------------------------------------------------------------
@@ -33,19 +27,9 @@ def _seed(repo, collection: str, docs: dict[str, str]) -> None:
 
 
 def _make_query_uc(tmp_repo, tmp_path: Path) -> QueryMemoryUseCase:
-    storage = RankerStorage(tmp_path / "rankers")
-    train_ranker = TrainRankerUseCase(tmp_repo, storage, NullRanker)
-    registry = RankerRegistry(
-        scope_resolver=lambda c: RankerScope(name=c, mode="isolated"),
-        ranker_factory=NullRanker,
-        storage=storage,
-    )
     return QueryMemoryUseCase(
         repo=tmp_repo,
         track_access=TrackAccessUseCase(tmp_repo),
-        build_features=BuildFeaturesUseCase(),
-        train_ranker=train_ranker,
-        ranker_provider=registry,
     )
 
 

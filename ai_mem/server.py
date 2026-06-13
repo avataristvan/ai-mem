@@ -3,7 +3,6 @@
 import asyncio
 import json
 import os
-import time
 from pathlib import Path
 
 import mcp.types as types
@@ -13,7 +12,6 @@ from mcp.server.stdio import stdio_server
 from ai_mem.application.add_edge import AddEdgeUseCase
 from ai_mem.application.add_memory import AddMemoryUseCase
 from ai_mem.application.boost_confidence import BoostConfidenceUseCase
-from ai_mem.application.build_features import BuildFeaturesUseCase
 from ai_mem.application.cleanup_memory import CleanupMemoryUseCase
 from ai_mem.application.delete_memory import DeleteMemoryUseCase
 from ai_mem.application.detect_split_hints import DetectSplitHintsUseCase
@@ -22,15 +20,10 @@ from ai_mem.application.get_edges import GetEdgesUseCase
 from ai_mem.application.get_memory import GetMemoryUseCase
 from ai_mem.application.list_collections import ListCollectionsUseCase
 from ai_mem.application.list_entries import ListEntriesUseCase
-from ai_mem.application.load_ranker_config import LoadRankerConfigUseCase
 from ai_mem.application.query_memory import QueryMemoryUseCase
-from ai_mem.application.ranker_registry import RankerRegistry
 from ai_mem.application.split_memory import SplitMemoryUseCase
 from ai_mem.application.track_access import TrackAccessUseCase
-from ai_mem.application.train_ranker import TrainRankerUseCase
-from ai_mem.domain.learning import RankerScope
 from ai_mem.infrastructure.chroma_repository import ChromaMemoryRepository
-from ai_mem.infrastructure.ranker_storage import RankerStorage
 
 DEFAULT_COLLECTION = "workspace"
 
@@ -41,35 +34,10 @@ try:
     _repo = BM25MemoryRepository(_inner_repo)
 except ImportError:
     _repo = _inner_repo
-_storage = RankerStorage(_db_path / "rankers")
-
-try:
-    from ai_mem.infrastructure.torch_ranker import TorchMicroRanker as _RankerClass
-    from ai_mem.infrastructure.null_ranker import NullRanker as _FallbackClass
-    _fallback_factory = _FallbackClass
-except ImportError:
-    from ai_mem.infrastructure.null_ranker import NullRanker as _RankerClass  # type: ignore[assignment]
-    _fallback_factory = None
-
-_scope_map = LoadRankerConfigUseCase(_db_path / "ranker_config.json").execute()
-
-
-def _scope_resolver(collection: str) -> RankerScope:
-    return _scope_map.get(collection, RankerScope(name=collection, mode="isolated"))
-
-
-_registry = RankerRegistry(
-    scope_resolver=_scope_resolver,
-    ranker_factory=_RankerClass,
-    storage=_storage,
-    fallback_factory=_fallback_factory,
-)
 
 _track_access = TrackAccessUseCase(_repo)
-_build_features = BuildFeaturesUseCase()
-_train_ranker = TrainRankerUseCase(_repo, _storage, _RankerClass, scope_resolver=_scope_resolver)
 _add = AddMemoryUseCase(_repo)
-_query = QueryMemoryUseCase(_repo, _track_access, _build_features, _train_ranker, _registry)
+_query = QueryMemoryUseCase(_repo, _track_access)
 _list = ListCollectionsUseCase(_repo)
 _delete = DeleteMemoryUseCase(_repo)
 _cleanup = CleanupMemoryUseCase(_repo)
@@ -228,28 +196,6 @@ async def list_tools() -> list[types.Tool]:
                             "Flag entries too project-specific to keep cross-project. "
                             "Prefer DELETE over MERGE for project-specific entries.'"
                         ),
-                    },
-                },
-                "required": [],
-            },
-        ),
-        types.Tool(
-            name="mem_train",
-            description=(
-                "Run a training step for the learned re-ranker. "
-                "Reads the query buffer, assigns labels from access history, and performs one gradient step. "
-                "Pass 'negative_ids' to explicitly mark entries as unhelpful (0.0) — "
-                "overrides the automatic positive label set at query time. "
-                "Omit 'collection' to train all known collections (negative_ids ignored in that mode)."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "collection": {"type": "string", "description": "Collection to train (omit for all)"},
-                    "negative_ids": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Memory IDs to label as 0.0 (not useful this session). Requires 'collection'.",
                     },
                 },
                 "required": [],
@@ -507,31 +453,6 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         focus_hint = arguments.get("focus_hint") or None
         result = await asyncio.to_thread(_dream.execute, col_arg, mode, auto_delete, focus_hint)
         return [types.TextContent(type="text", text=result)]
-
-    if name == "mem_train":
-        now = time.time()
-        col_arg = arguments.get("collection")
-        negative_ids = arguments.get("negative_ids") or []
-        explicit_labels = {id_: 0.0 for id_ in negative_ids} if negative_ids else None
-        if col_arg:
-            metrics = _train_ranker.train_step(col_arg, now, explicit_labels=explicit_labels)
-            out = {"collection": col_arg, "n": metrics.n, "loss": metrics.loss, "skipped": metrics.skipped}
-        else:
-            # Deduplicate by scope key: hybrid-mode group members all map to the
-            # same scope, and training each member would re-train (and overwrite)
-            # the shared weights using a buffer that the first pass already drained.
-            collections = [c.name for c in _list.execute()]
-            seen_scopes: set[str] = set()
-            results_list = []
-            for col in collections:
-                key = _registry.scope_key(col)
-                if key in seen_scopes:
-                    continue
-                seen_scopes.add(key)
-                m = _train_ranker.train_step(col, now)
-                results_list.append({"collection": col, "scope": key, "n": m.n, "loss": m.loss, "skipped": m.skipped})
-            out = results_list  # type: ignore[assignment]
-        return [types.TextContent(type="text", text=json.dumps(out, indent=2))]
 
     if name == "mem_split":
         entry_id = arguments.get("entry_id") or None

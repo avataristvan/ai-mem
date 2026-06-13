@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""UserPromptSubmit hook — injects relevant memories when the ranker is trained enough."""
+"""UserPromptSubmit hook — injects relevant memories into Claude's context."""
 import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
-from ai_mem.application.ranker_registry import MIN_LABELED_EXAMPLES
 from ai_mem.repo_context import GLOBAL_COLLECTION, WORKSPACE_COLLECTION, detect_repo_context
 
 DB_PATH = Path(os.environ.get("AI_MEM_PATH", Path.home() / ".local" / "share" / "ai-mem"))
@@ -13,7 +13,7 @@ _STATS_PATH = DB_PATH / "session_stats.json"
 TOP_K = 3
 MAX_CHARS_PER_HIT = 300
 MAX_TOTAL_CHARS = 1500
-MIN_AVG_SCORE = 0.55
+CONTEXT_MIN_SCORE = 0.3
 SESSION_TTL_HOURS = 4
 ANTIPATTERN_TOP_K = 2
 MAX_CHARS_PER_ANTIPATTERN = 200
@@ -65,11 +65,10 @@ def _save_session_injected(db_path: Path, ids: set[str]) -> None:
 
 
 def _build_deps():
-    from ai_mem._hook_deps import _build_core, _make_query_uc
+    from ai_mem._hook_deps import _build_query_uc
 
-    repo, storage, scope_resolver, registry, RankerClass = _build_core(DB_PATH, with_bm25=True)
-    query_uc = _make_query_uc(repo, storage, scope_resolver, registry, RankerClass)
-    return query_uc, storage, registry
+    query_uc = _build_query_uc(DB_PATH, with_bm25=True)
+    return query_uc
 
 
 def _hits(query_uc, collection: str, query: str):
@@ -105,29 +104,6 @@ def _dilemma_hits(query_uc, collection: str, query: str):
         return []
 
 
-def _labeled_count(storage, registry, collection: str) -> int:
-    try:
-        scope_key = registry.scope_key(collection)
-        return storage.labeled_count(scope_key)
-    except Exception:
-        return 0
-
-
-def _avg_score(results) -> float:
-    if not results:
-        return 0.0
-    top = results[:TOP_K]
-    scores = [r.score for r in top if r.score is not None]
-    return sum(scores) / len(scores) if scores else 0.0
-
-
-def _qualifies(storage, registry, results, collection: str) -> bool:
-    return (
-        _labeled_count(storage, registry, collection) >= MIN_LABELED_EXAMPLES
-        and _avg_score(results) >= MIN_AVG_SCORE
-    )
-
-
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -146,16 +122,15 @@ def main():
         return
 
     try:
-        query_uc, storage, registry = _build_deps()
+        query_uc = _build_deps()
     except Exception:
         return
 
     global_results = _hits(query_uc, GLOBAL_COLLECTION, query)
-    global_ok = _qualifies(storage, registry, global_results, GLOBAL_COLLECTION)
+    global_hits = [r for r in global_results if (r.score or 0.0) >= CONTEXT_MIN_SCORE]
 
-    repo_results = []
+    repo_hits = []
     repo_collection = None
-    repo_ok = False
     antipattern_results = []
     dilemma_results = []
     try:
@@ -163,20 +138,19 @@ def main():
         if ctx.collection not in (GLOBAL_COLLECTION, WORKSPACE_COLLECTION):
             repo_collection = ctx.collection
             repo_results = _hits(query_uc, repo_collection, query)
-            repo_ok = _qualifies(storage, registry, repo_results, repo_collection)
+            repo_hits = [r for r in repo_results if (r.score or 0.0) >= CONTEXT_MIN_SCORE]
             antipattern_results = _antipattern_hits(query_uc, repo_collection, query)
             dilemma_results = _dilemma_hits(query_uc, repo_collection, query)
     except Exception:
         pass
 
-    if not global_ok and not repo_ok and not antipattern_results and not dilemma_results:
+    if not global_hits and not repo_hits and not antipattern_results and not dilemma_results:
         return
 
-    collected: list[tuple[str, object]] = []
-    if global_ok:
-        collected.extend((GLOBAL_COLLECTION, r) for r in global_results)
-    if repo_ok and repo_collection:
-        collected.extend((repo_collection, r) for r in repo_results)
+    collected: list[tuple[str, Any]] = []
+    collected.extend((GLOBAL_COLLECTION, r) for r in global_hits)
+    if repo_collection:
+        collected.extend((repo_collection, r) for r in repo_hits)
 
     try:
         from ai_mem.session_stats import record_injection
@@ -194,7 +168,7 @@ def main():
     dilemma_results = [r for r in dilemma_results if getattr(r, "id", None) not in already_injected]
 
     # Combined budget cap: include entries until MAX_TOTAL_CHARS is reached.
-    budget_collected: list[tuple[str, object]] = []
+    budget_collected: list[tuple[str, Any]] = []
     chars_used = 0
     for coll, r in collected:
         entry_len = min(len(r.text), MAX_CHARS_PER_HIT)

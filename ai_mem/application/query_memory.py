@@ -1,16 +1,10 @@
-"""Query memory semantically with re-ranking; records access and training signal."""
+"""Query memory semantically; records access for the confidence lifecycle."""
 from __future__ import annotations
 
-import time
 from collections import defaultdict
 
-from ai_mem.application.build_features import BuildFeaturesUseCase
 from ai_mem.application.track_access import TrackAccessUseCase
-from ai_mem.application.train_ranker import TrainRankerUseCase
-from ai_mem.domain.learning import RankerProvider
 from ai_mem.domain.memory import MemoryRepository, QueryResult
-
-_FETCH_K = 50  # over-fetch for re-ranking
 
 
 class QueryMemoryUseCase:
@@ -18,15 +12,9 @@ class QueryMemoryUseCase:
         self,
         repo: MemoryRepository,
         track_access: TrackAccessUseCase,
-        build_features: BuildFeaturesUseCase,
-        train_ranker: TrainRankerUseCase,
-        ranker_provider: RankerProvider,
     ) -> None:
         self._repo = repo
         self._track_access = track_access
-        self._build_features = build_features
-        self._train_ranker = train_ranker
-        self._ranker_provider = ranker_provider
         self._session_hits: dict[str, set[str]] = defaultdict(set)
 
     def execute(
@@ -38,25 +26,10 @@ class QueryMemoryUseCase:
         type_filter: str | None = None,
         min_score_for_tracking: float | None = None,
     ) -> list[QueryResult]:
-        now = time.time()
-        candidates = self._repo.query(collection, query, _FETCH_K, max_age_days, type_filter)
-        if not candidates:
+        results = self._repo.query(collection, query, n_results, max_age_days, type_filter)
+        if not results:
             return []
 
-        features = self._build_features.execute(candidates, now, self._session_hits.get(collection))
-        ranker = self._ranker_provider.get(collection)
-        scores = ranker.rank(features)
-        if len(scores) != len(candidates):
-            raise RuntimeError(
-                f"ranker.rank() returned {len(scores)} scores for {len(candidates)} candidates"
-            )
-
-        ranked = sorted(
-            zip(candidates, scores),
-            key=lambda pair: pair[1],
-            reverse=True,
-        )
-        results = [r for r, _ in ranked[:n_results]]
         for i, r in enumerate(results):
             r.rank = i + 1
 
@@ -65,14 +38,13 @@ class QueryMemoryUseCase:
 
         # When a score threshold is set, only track entries that are a strong enough
         # semantic match. Weak path-based matches (posttool_hook) would otherwise
-        # receive immediate 1.0 labels despite being unrelated to the actual task.
+        # receive immediate credit despite being unrelated to the actual task.
         tracked_ids = (
             {r.id for r in results if r.score >= min_score_for_tracking}
             if min_score_for_tracking is not None
             else returned_ids
         )
         self._track_access.execute(collection, list(tracked_ids))
-        self._train_ranker.record_query(collection, candidates, features, now, returned_ids=tracked_ids)
 
         results = self._append_linked(collection, results, returned_ids)
         return results

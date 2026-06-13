@@ -120,27 +120,6 @@ def _high_confidence_entries(repo, collection: str, exclude_ids: set[str]) -> li
         return []
 
 
-_RANKER_MIN_LABELED = 10  # mirrors MIN_LABELED_EXAMPLES in userprompt_hook.py
-
-
-def _ranker_signal(collection: str) -> str | None:
-    """Return a one-line calibration status for the active collection, or None."""
-    try:
-        from ai_mem.infrastructure.ranker_storage import RankerStorage
-        storage = RankerStorage(DB_PATH / "rankers")
-        if not storage.load_buffer(collection):
-            return None
-        n_labeled = storage.labeled_count(collection)
-        if n_labeled >= _RANKER_MIN_LABELED:
-            return f"Ranker ({collection}): {n_labeled} labeled — calibrated, context hook active"
-        return (
-            f"Ranker ({collection}): {n_labeled} labeled — cold start "
-            f"(< {_RANKER_MIN_LABELED}, context hook inactive — query mem manually)"
-        )
-    except Exception:
-        return None
-
-
 
 def main():
     try:
@@ -244,10 +223,6 @@ def main():
         git_commits = _git_commits_since(DB_PATH)
         if git_commits:
             parts.append("Git commits since last session:\n" + "\n".join(f"  {c}" for c in git_commits))
-
-        signal = _ranker_signal(ctx.collection)
-        if signal:
-            parts.append(signal)
 
         _write_prev_session(DB_PATH, current_count)
 

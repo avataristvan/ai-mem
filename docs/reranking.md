@@ -1,84 +1,41 @@
-# Adaptive Re-ranking
+# Confidence Lifecycle
 
-ai-mem trains a small neural network per collection (or group) that learns to predict which memories will be accessed again, boosting their rank at query time.
+> The ML re-ranker was removed in 2026-06. This document describes the replacement model.
 
-## Feature Vector (10 elements)
+ai-mem tracks the epistemic status of each entry via a `confidence` field (float 0.0–1.0) stored in ChromaDB metadata.
 
-`RankingFeatures.as_vector()` returns:
+## Lifecycle
 
-| Index | Value | Source |
-|-------|-------|--------|
-| 0 | `cosine_similarity` | 1 − ChromaDB distance |
-| 1 | `age_days` | now − created_at |
-| 2 | `last_access_days` | now − last_accessed_at (fallback: age_days) |
-| 3 | `access_count` | raw count |
-| 4 | `is_never_accessed` | 1.0 if count == 0 |
-| 5 | `has_ttl` | 1.0 if TTL is set |
-| 6 | `ttl_horizon` | expires_in_days (or 365.0 if no TTL) |
-| 7 | `log1p(age_days)` | log transform |
-| 8 | `log1p(last_access_days)` | log transform |
-| 9 | `log1p(access_count)` | log transform |
+| Stage | Trigger | Effect |
+|-------|---------|--------|
+| Write | New entry created | `confidence = 0.7` |
+| Boost | `/reflect` confirms entry was decisive | `mem_boost(delta=+0.1)` |
+| Decay | Dream cycle flags it as stale | `mem_boost(delta=-0.1)` |
+| Always-present | `confidence > 0.9` AND `access_count ≥ 3` | Injected at every `SessionStart` |
+| Decay candidate | `confidence < 0.3` | Flagged in `mem_dream` report |
+| Promotion candidate | `confidence > 0.9` AND `access_count ≥ 3` | Flagged in `mem_dream` report for CLAUDE.md |
 
-**Critical:** `cosine_similarity = 1 − distance`. Higher = more relevant. Never invert this value.
+Explicit override: pass `confidence=<value>` in `mem_add` metadata to set a precise start value. Pass `confidence_delta=<±value>` to apply an additive adjustment relative to the stored value.
 
-## TorchMicroRanker
+## Retrieval
 
-Architecture: `[10 → 32 → 16 → 1]` MLP with BatchNorm and ReLU activations.
+`QueryMemoryUseCase` returns results in ChromaDB's native cosine order. No re-ranking step. `TrackAccessUseCase` increments `access_count` and updates `last_accessed_at` on each retrieval — these drive the confidence gate for `[always-present]`.
 
-**Loss:** BCE loss + 0.3 × contrastive loss (co-activated entries pulled closer).
+## mem_boost
 
-**Training:**
-- Labels assigned from `last_accessed_at` history after a 7-day window
-- If an entry was accessed within 7 days of retrieval: label = 1.0, else 0.0
-- NaN-loss guard: training step is skipped if loss is NaN (prevents weight corruption)
-- Labeled examples are evicted from buffer after training to prevent re-labeling
-
-**Optimizer:** AdamW, lr=1e-3
-
-**Fallback:** When PyTorch is not installed, `NullRanker` returns raw `cosine_similarity` scores unchanged.
-
-## Training Pipeline
-
-```
-QueryMemoryUseCase.execute()
-  ├── ChromaDB.query(top_20)          # always over-fetches 20
-  ├── BuildFeaturesUseCase            # QueryResult + MemoryEntry → RankingFeatures
-  ├── RankerRegistry.get(collection)  # loads/caches LearnedRanker
-  ├── ranker.rank(features)           # re-score
-  ├── sort by new score, slice n_results
-  ├── TrackAccessUseCase              # bump last_accessed_at + access_count
-  └── TrainRankerUseCase.append()    # buffer the TrainingExample
+```python
+mem_boost(ids=["entry_id"], collection="repo.my-project", delta=0.1)   # boost
+mem_boost(ids=["entry_id"], collection="repo.my-project", delta=-0.1)  # decay
 ```
 
-`TrainRankerUseCase.train_step()` is called explicitly via `mem_train` tool (or from `userprompt_hook.py`).
+Called by `/reflect` Step 3.1 for entries that were decisive in the session.
 
-## RankerStorage
+## [always-present] injection
 
-- Buffer: `{DB_PATH}/rankers/{scope_key}.jsonl`
-- Weights: `{DB_PATH}/rankers/{scope_key}.pt`
-- Corrupt lines are logged to stderr and skipped (never crash)
+`hook.py` scans the active collection at session start. Entries meeting the gate (`confidence > 0.9`, `access_count ≥ 3`) are embedded directly in the `additionalContext` block, independent of any query.
 
-## Hybrid Mode
-
-Multiple collections can share one trained ranker via `ranker_config.json`:
-
-```json
-{
-  "groups": [
-    {
-      "name": "work-services",
-      "collections": ["repo.payment-svc", "repo.order-svc"],
-      "mode": "hybrid"
-    }
-  ]
-}
-```
-
-- Scope key for isolated collection = collection name
-- Scope key for hybrid member = group name
-- `RankerRegistry.scope_key(collection)` resolves this
-- `TrainRankerUseCase` deduplicates by scope key when training all collections to avoid double-training shared weights
-
-## RankerRegistry
-
-Lives in the application layer (coordinates infrastructure artifacts). Lazy-loads and caches one `LearnedRanker` per scope key. Implements `RankerProvider` Protocol.
+Constants (in `hook.py`):
+- `_HIGH_CONFIDENCE_THRESHOLD = 0.9`
+- `_HIGH_CONFIDENCE_MIN_ACCESS = 3`
+- `_HIGH_CONFIDENCE_MAX = 3` (max entries injected)
+- `_HIGH_CONFIDENCE_CHARS = 300` (truncation limit per entry)
