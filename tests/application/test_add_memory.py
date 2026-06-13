@@ -53,8 +53,28 @@ def test_readd_preserves_access_history(tmp_repo):
     assert after.metadata["access_count"] == 2
 
 
-def test_confidence_defaults_to_1_on_new_entry(tmp_repo):
+def test_confidence_defaults_to_07_on_new_entry(tmp_repo):
     AddMemoryUseCase(tmp_repo).execute(collection="test_col", documents=["x"], ids=["a"])
+    meta = GetMemoryUseCase(tmp_repo).execute("test_col", ["a"])[0].metadata
+    assert meta["confidence"] == 0.7
+
+
+def test_upsert_preserves_existing_confidence(tmp_repo):
+    add = AddMemoryUseCase(tmp_repo)
+    get = GetMemoryUseCase(tmp_repo)
+
+    add.execute(collection="test_col", documents=["v1"], ids=["a"], metadatas=[{"confidence": 0.9}])
+    add.execute(collection="test_col", documents=["v2"], ids=["a"])
+
+    meta = get.execute("test_col", ["a"])[0].metadata
+    assert meta["confidence"] == 0.9
+
+
+def test_explicit_confidence_overrides_default_for_new_entry(tmp_repo):
+    AddMemoryUseCase(tmp_repo).execute(
+        collection="test_col", documents=["x"], ids=["a"],
+        metadatas=[{"confidence": 1.0}],
+    )
     meta = GetMemoryUseCase(tmp_repo).execute("test_col", ["a"])[0].metadata
     assert meta["confidence"] == 1.0
 

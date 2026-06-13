@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """ai-mem installer — registers the MCP server with Claude Code, Gemini CLI, and/or Cursor."""
+import argparse
 import json
 import subprocess
 import sys
@@ -310,6 +311,16 @@ def prompt_targets() -> list:
 
 
 def main():
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--sync-commands", action="store_true")
+    args, _ = parser.parse_known_args()
+
+    if args.sync_commands:
+        install_mem_init_command()
+        install_reflect_command()
+        print("\n✅ Commands synced.")
+        return
+
     print("=" * 50)
     print("  ai-mem installer")
     print("=" * 50)
@@ -329,6 +340,7 @@ def main():
     print("\n   Quick start:")
     print("     /mem-init   — initialize memory for your current project")
     print("     /reflect    — run after every task to close the learning loop")
+    print("     python3 install.py --sync-commands   — sync only the /mem-init and /reflect commands")
     print(f"\n   How the framework works: {REPO_ROOT / 'docs' / 'epistemology-framework.md'}")
 
 

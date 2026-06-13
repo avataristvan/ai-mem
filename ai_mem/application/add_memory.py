@@ -34,7 +34,7 @@ class AddMemoryUseCase:
             user_meta = dict(metadatas[i]) if metadatas and i < len(metadatas) else {}
             prior_meta = existing[id_].metadata if id_ in existing else {}
 
-            prior_confidence = float(prior_meta.get("confidence", 1.0))
+            prior_confidence = float(prior_meta["confidence"]) if "confidence" in prior_meta else 0.7
             if "confidence_delta" in user_meta:
                 delta = float(user_meta.pop("confidence_delta"))
                 confidence = max(0.0, min(1.0, prior_confidence + delta))

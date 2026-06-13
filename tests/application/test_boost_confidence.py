@@ -8,7 +8,7 @@ from ai_mem.application.get_memory import GetMemoryUseCase
 
 def test_boost_clamped_at_1(tmp_repo):
     AddMemoryUseCase(tmp_repo).execute(collection="col", documents=["x"], ids=["a"])
-    n = BoostConfidenceUseCase(tmp_repo).execute("col", ["a"], 0.1)
+    n = BoostConfidenceUseCase(tmp_repo).execute("col", ["a"], 0.5)
     assert n == 1
     meta = GetMemoryUseCase(tmp_repo).execute("col", ["a"])[0].metadata
     assert meta["confidence"] == 1.0
