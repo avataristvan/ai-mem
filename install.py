@@ -90,6 +90,8 @@ def register_claude():
         "Do not wait to be asked. "
         "\n\n"
         "WHEN TO STORE: use mem_add after any decision, fix, or discovery worth remembering. "
+        "One entry = one concept — if you find yourself writing multiple ## sections or independent "
+        "sub-topics in one entry, split it into separate entries instead (or use mem_split afterward). "
         "Prefer short, precise entries. Use ttl_days for time-bounded items (tasks, reminders). "
         "Always update current_focus (id='current_focus') at the end of a working session. "
         "Run /reflect to do this as a structured ritual. "

@@ -13,6 +13,7 @@ _ADD_TARGET_RE = re.compile(
     r"^\s*[-*•]\s+ADD\s+(\S+)\s+\[target=([^\]]+)\]\s*:",
     re.MULTILINE | re.IGNORECASE,
 )
+_SPLIT_RE = re.compile(r"^\s*[-*•]\s+SPLIT\s+(\S+)\s*:", re.MULTILINE | re.IGNORECASE)
 
 MODELS = {
     "haiku": "claude-haiku-4-5-20251001",
@@ -33,7 +34,10 @@ If they share an edge (shown in metadata), verify the relationship is accurate �
 - Entries with access_count ≥ 5 are load-bearing (frequently retrieved). \
 Avoid DELETE or MERGE unless clearly redundant.
 - If two entries share an edge, the edge makes both necessary. \
-Verify the relationship before proposing structural changes."""
+Verify the relationship before proposing structural changes.
+- Entries covering multiple independent concepts (multiple ## sections, multiple Tried: blocks, \
+or 4+ enumerated items that don't build on each other) should be proposed for SPLIT, not MERGE. \
+Each sub-entry should cover exactly one concept so queries pull in only what's relevant."""
 
 _COLLECTION_CONTEXT = """\
 COLLECTIONS PRESENT:
@@ -51,6 +55,7 @@ Format each action as:
 - MERGE <id1> + <id2>: <into what>
 - DELETE <id>: <reason>
 - ADD <suggested-id> [target=<collection>]: <content summary>
+- SPLIT <id>: <list the sub-concept titles to split into>
 
 For ADD, set target= to the collection where the entry belongs:
   - Same collection as the source entry if it is project-specific.
@@ -65,6 +70,7 @@ You are a memory consolidation agent. The memories below come from AI assistant 
 2. **Redundancies** — entries that overlap and could be merged
 3. **Stale entries** — entries likely outdated (explain why)
 4. **Missing principles** — patterns that emerge across entries but aren't yet documented
+5. **Over-broad entries** — entries covering multiple independent concepts that should be split so queries pull in only the relevant piece
 
 {action_format}
 
@@ -245,6 +251,24 @@ def _confidence_report(entries: list[MemoryEntry]) -> str:
     return "\n" + "\n".join(sections)
 
 
+def _split_candidates(synthesis: str, all_entries: list[MemoryEntry]) -> str:
+    """Return a formatted section listing SPLIT proposals from the synthesis, or empty string."""
+    id_to_preview: dict[str, str] = {e.id: e.text[:60].replace("\n", " ") for e in all_entries}
+    found = _SPLIT_RE.findall(synthesis)
+    if not found:
+        return ""
+    lines = []
+    for eid in found:
+        preview = id_to_preview.get(eid, "")
+        preview_str = f" — {preview}…" if preview else ""
+        lines.append(f"- `{eid}`{preview_str}")
+    return (
+        "\n\n---\n\n## Split Candidates\n\n"
+        "These entries cover multiple independent concepts — consider splitting with `mem_split`:\n\n"
+        + "\n".join(lines)
+    )
+
+
 def _propagation_candidates(synthesis: str, source_collections: set[str]) -> list[tuple[str, str]]:
     """Return (entry_id, target_collection) pairs where target differs from all source collections."""
     candidates = []
@@ -309,6 +333,10 @@ class DreamMemoryUseCase:
                 "These ADD proposals target a higher-level collection "
                 "(review and apply with `mem_add` if confirmed):\n\n" + lines
             )
+
+        split_report = _split_candidates(synthesis, all_entries)
+        if split_report:
+            report += split_report
 
         conf_report = _confidence_report(all_entries)
         if conf_report:
