@@ -64,7 +64,10 @@ async def list_tools() -> list[types.Tool]:
                 "or 'global' for cross-session knowledge shared across all repos. "
                 "When the user asks to store something for a different project (e.g. 'note for my-app'), "
                 "pass that project's collection explicitly (e.g. 'repo.my-app') — never rely on the active collection default for cross-project intent. "
-                "Set 'ttl_days' to expire the entry automatically (e.g. 30 for one month)."
+                "Set 'ttl_days' to expire the entry automatically (e.g. 30 for one month). "
+                "When updating an existing entry (same id), existing metadata is preserved by default — "
+                "confidence, access_count, boost_count, created_at, edges, and type are all kept intact. "
+                "You do NOT need to re-pass existing metadata fields for a text-only update."
             ),
             inputSchema={
                 "type": "object",
