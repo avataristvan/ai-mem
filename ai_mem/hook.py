@@ -39,6 +39,8 @@ _HIGH_CONFIDENCE_MIN_ACCESS = 3
 _HIGH_CONFIDENCE_MIN_BOOSTS = 1
 _HIGH_CONFIDENCE_MAX = 3
 _HIGH_CONFIDENCE_CHARS = 300
+_EXPIRED_MAX = 3
+_EXPIRED_PREVIEW_CHARS = 120
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -121,6 +123,26 @@ def _high_confidence_entries(repo, collection: str, exclude_ids: set[str]) -> li
     except Exception:
         return []
 
+
+
+def _expired_entries(repo, collection: str, now_ts: float) -> list:
+    """Return entries with expires_at in the past, sorted oldest-first."""
+    try:
+        result = []
+        for e in repo.get_all(collection):
+            raw = e.metadata.get("expires_at")
+            if raw is None:
+                continue
+            try:
+                exp = float(raw)
+            except (ValueError, TypeError):
+                continue
+            if exp < now_ts:
+                result.append((exp, e))
+        result.sort(key=lambda x: x[0])
+        return [e for _, e in result]
+    except Exception:
+        return []
 
 
 def main():
@@ -209,6 +231,21 @@ def main():
                     "[always-present]\n"
                     + "\n".join(f"- {_truncate(e.text, _HIGH_CONFIDENCE_CHARS)}" for e in _hc_entries)
                 )
+        _now_ts = time.time()
+        _expired: list = []
+        if ctx.collection != WORKSPACE_COLLECTION:
+            _expired.extend(_expired_entries(repo, ctx.collection, _now_ts))
+        _expired.extend(_expired_entries(repo, GLOBAL_COLLECTION, _now_ts))
+        if _expired:
+            from datetime import datetime
+            _exp_lines = []
+            for e in _expired[:_EXPIRED_MAX]:
+                exp_ts = float(e.metadata.get("expires_at", 0))
+                exp_date = datetime.fromtimestamp(exp_ts).strftime("%Y-%m-%d")
+                preview = _truncate(e.text, _EXPIRED_PREVIEW_CHARS)
+                _exp_lines.append(f"⏰ {e.id}: \"{preview}\" (expired {exp_date})")
+            parts.append("[ai-mem expired]\n" + "\n".join(_exp_lines))
+
         if ctx.has_claude_md:
             parts.append(
                 f'Active collection: "{ctx.collection}". '

@@ -61,6 +61,7 @@ def _run_main(
     git_commits: list[str] | None = None,
     expert_query_results: list | None = None,
     high_confidence_entries: list | None = None,
+    expired_entries: list | None = None,
 ) -> str:
     """Run hook.main() with mocked dependencies; return captured stdout.
 
@@ -106,6 +107,7 @@ def _run_main(
         patch.object(hook, "WORKSPACE_COLLECTION", "workspace"),
         patch.object(hook, "ListCollectionsUseCase", mock_list_uc),
         patch.object(hook, "_high_confidence_entries", return_value=high_confidence_entries or []),
+        patch.object(hook, "_expired_entries", return_value=expired_entries or []),
     ):
         tmp_path.mkdir(parents=True, exist_ok=True)
         captured: list[str] = []
@@ -423,6 +425,97 @@ def test_high_confidence_gate_passes_with_boost_count_one() -> None:
 
     assert len(result) == 1
     assert result[0].id == "pattern_w"
+
+
+# ---------------------------------------------------------------------------
+# Expired entries
+# ---------------------------------------------------------------------------
+
+def _make_expired_entry(id: str, text: str, expires_at: float) -> MagicMock:
+    e = MagicMock()
+    e.id = id
+    e.text = text
+    e.metadata = {"expires_at": str(expires_at)}
+    return e
+
+
+def test_expired_entries_appear_in_output(tmp_path: Path) -> None:
+    """Expired entries must appear as [ai-mem expired] block."""
+    entry = _make_expired_entry("todo_sprint", "Finish BLE refactor before team meeting", expires_at=1000.0)
+    out = _run_main(
+        tmp_path,
+        focus_map={"global": "global mem"},
+        repo_collection="repo.ai-mem",
+        expired_entries=[entry],
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "[ai-mem expired]" in ctx
+    assert "⏰" in ctx
+    assert "todo_sprint" in ctx
+
+
+def test_no_expired_block_when_none_expired(tmp_path: Path) -> None:
+    """No [ai-mem expired] block when all entries are current."""
+    out = _run_main(
+        tmp_path,
+        focus_map={"global": "global mem"},
+        repo_collection="repo.ai-mem",
+        expired_entries=[],
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "[ai-mem expired]" not in ctx
+
+
+def test_expired_entry_text_truncated(tmp_path: Path) -> None:
+    """Expired entry text must be truncated to _EXPIRED_PREVIEW_CHARS."""
+    long_text = "X" * 300
+    entry = _make_expired_entry("todo_long", long_text, expires_at=1000.0)
+    out = _run_main(
+        tmp_path,
+        focus_map={"global": "global mem"},
+        repo_collection="repo.ai-mem",
+        expired_entries=[entry],
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert long_text not in ctx
+    assert "…" in ctx
+
+
+def test_expired_entries_capped_at_max(tmp_path: Path) -> None:
+    """At most _EXPIRED_MAX expired entries must appear."""
+    entries = [_make_expired_entry(f"todo_{i}", f"Entry {i}", expires_at=float(i)) for i in range(6)]
+    out = _run_main(
+        tmp_path,
+        focus_map={"global": "global mem"},
+        repo_collection="repo.ai-mem",
+        expired_entries=entries,
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    # Only _EXPIRED_MAX = 3 entries should appear
+    assert ctx.count("⏰") == hook._EXPIRED_MAX
+
+
+def test_expired_entries_helper_filters_by_now(tmp_path: Path) -> None:
+    """_expired_entries returns only entries whose expires_at < now_ts."""
+    mock_repo = MagicMock()
+    past = _make_expired_entry("old", "past entry", expires_at=1000.0)
+    future = _make_expired_entry("new", "future entry", expires_at=9_999_999_999.0)
+    no_ttl = MagicMock()
+    no_ttl.metadata = {}
+    mock_repo.get_all.return_value = [past, future, no_ttl]
+
+    result = hook._expired_entries(mock_repo, "repo.ai-mem", now_ts=2000.0)
+
+    assert len(result) == 1
+    assert result[0].id == "old"
 
 
 def test_always_present_text_truncated_to_high_confidence_chars(tmp_path: Path) -> None:
