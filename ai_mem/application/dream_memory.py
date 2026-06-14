@@ -110,7 +110,7 @@ MEMORIES:
 {memories}
 
 FIRST-PASS ANALYSIS:
-{a}"""
+{haiku_pass}"""
 
 _P_SONNET_CRITIQUE = """\
 You are the second voice in a memory consolidation debate. A faster model gave an initial analysis.
@@ -123,7 +123,7 @@ MEMORIES:
 {memories}
 
 INITIAL ANALYSIS:
-{a}"""
+{haiku_analysis}"""
 
 _P_HAIKU_REBUTTAL = """\
 You gave an initial memory analysis. A more capable model critiqued it. Respond:
@@ -132,10 +132,10 @@ You gave an initial memory analysis. A more capable model critiqued it. Respond:
 - Add anything this exchange surfaced
 
 YOUR INITIAL ANALYSIS:
-{a}
+{haiku_analysis}
 
 CRITIQUE:
-{b}"""
+{sonnet_critique}"""
 
 _P_SONNET_FINAL = """\
 Synthesize the best insights from this full debate into one clean, actionable proposal.
@@ -145,13 +145,13 @@ Synthesize the best insights from this full debate into one clean, actionable pr
 {collection_context}
 
 INITIAL ANALYSIS:
-{a}
+{haiku_analysis}
 
 CRITIQUE:
-{b}
+{sonnet_critique}
 
 REBUTTAL:
-{c}"""
+{haiku_rebuttal}"""
 
 
 def _format_entries(entries: list[MemoryEntry]) -> str:
@@ -362,7 +362,7 @@ class DreamMemoryUseCase:
     def _run_hier(self, ts: str, memories: str, col_ctx: str) -> tuple[str, str]:
         haiku_pass = _call("haiku", _P_HAIKU.format(memories=memories, collection_context=col_ctx))
         sonnet_synthesis = _call("sonnet", _P_SONNET_HIER.format(
-            memories=memories, collection_context=col_ctx, action_format=_ACTION_FORMAT, a=haiku_pass,
+            memories=memories, collection_context=col_ctx, action_format=_ACTION_FORMAT, haiku_pass=haiku_pass,
         ))
         report = (
             f"# Dream Log — {ts} — hier\n\n"
@@ -374,11 +374,12 @@ class DreamMemoryUseCase:
     def _run_team(self, ts: str, memories: str, col_ctx: str) -> tuple[str, str]:
         haiku_analysis = _call("haiku", _P_HAIKU.format(memories=memories, collection_context=col_ctx))
         sonnet_critique = _call("sonnet", _P_SONNET_CRITIQUE.format(
-            memories=memories, collection_context=col_ctx, a=haiku_analysis,
+            memories=memories, collection_context=col_ctx, haiku_analysis=haiku_analysis,
         ))
-        haiku_rebuttal = _call("haiku", _P_HAIKU_REBUTTAL.format(a=haiku_analysis, b=sonnet_critique))
+        haiku_rebuttal = _call("haiku", _P_HAIKU_REBUTTAL.format(haiku_analysis=haiku_analysis, sonnet_critique=sonnet_critique))
         sonnet_final = _call("sonnet", _P_SONNET_FINAL.format(
-            collection_context=col_ctx, action_format=_ACTION_FORMAT, a=haiku_analysis, b=sonnet_critique, c=haiku_rebuttal,
+            collection_context=col_ctx, action_format=_ACTION_FORMAT,
+            haiku_analysis=haiku_analysis, sonnet_critique=sonnet_critique, haiku_rebuttal=haiku_rebuttal,
         ))
         report = (
             f"# Dream Log — {ts} — team\n\n"
