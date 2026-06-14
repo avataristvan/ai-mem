@@ -405,7 +405,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                     "rank": r.rank,
                     "id": r.id,
                     "score": r.score,
-                    "confidence": int(r.metadata.get("access_count", 0)),
+                    "confidence": float(r.metadata.get("confidence", 0.0)),
                     "metadata": r.metadata,
                     "text": r.text,
                 }
