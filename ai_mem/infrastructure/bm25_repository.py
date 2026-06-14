@@ -13,7 +13,7 @@ def _normalize(scores: list[float]) -> list[float]:
     if hi == lo:
         return [1.0] * len(scores)  # all equal → treat as maximally relevant (neutral position)
     span = hi - lo
-    return [(s - lo) / span for s in scores]
+    return [(score - lo) / span for score in scores]
 
 
 class BM25MemoryRepository:
@@ -40,7 +40,7 @@ class BM25MemoryRepository:
         if not candidates:
             return []
 
-        corpus = [r.text.lower().split() for r in candidates]
+        corpus = [candidate.text.lower().split() for candidate in candidates]
         query_tokens = text.lower().split()
 
         try:
@@ -48,15 +48,15 @@ class BM25MemoryRepository:
         except ZeroDivisionError:
             bm25_raw = [0.0] * len(candidates)
 
-        cosine_raw = [r.score for r in candidates]
+        cosine_raw = [candidate.score for candidate in candidates]
 
         cosine_norm = _normalize(cosine_raw)
         bm25_norm = _normalize(bm25_raw)
 
         alpha = self._alpha
         fused = [
-            alpha * c + (1 - alpha) * b
-            for c, b in zip(cosine_norm, bm25_norm)
+            alpha * cosine_val + (1 - alpha) * bm25_val
+            for cosine_val, bm25_val in zip(cosine_norm, bm25_norm)
         ]
 
         ranked = sorted(

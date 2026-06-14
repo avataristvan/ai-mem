@@ -107,19 +107,19 @@ def _high_confidence_entries(repo, collection: str, exclude_ids: set[str]) -> li
     try:
         all_entries = repo.get_all(collection)
         candidates = []
-        for e in all_entries:
-            if e.id in exclude_ids:
+        for entry in all_entries:
+            if entry.id in exclude_ids:
                 continue
             try:
-                conf = float(e.metadata.get("confidence", 0.0))
+                conf = float(entry.metadata.get("confidence", 0.0))
             except (ValueError, TypeError):
                 continue
-            ac = int(e.metadata.get("access_count", 0))
-            bc = int(e.metadata.get("boost_count", 0))
-            if conf > _HIGH_CONFIDENCE_THRESHOLD and ac >= _HIGH_CONFIDENCE_MIN_ACCESS and bc >= _HIGH_CONFIDENCE_MIN_BOOSTS:
-                candidates.append((conf, e))
+            access_count = int(entry.metadata.get("access_count", 0))
+            boost_count = int(entry.metadata.get("boost_count", 0))
+            if conf > _HIGH_CONFIDENCE_THRESHOLD and access_count >= _HIGH_CONFIDENCE_MIN_ACCESS and boost_count >= _HIGH_CONFIDENCE_MIN_BOOSTS:
+                candidates.append((conf, entry))
         candidates.sort(key=lambda x: x[0], reverse=True)
-        return [e for _, e in candidates[:_HIGH_CONFIDENCE_MAX]]
+        return [entry for _, entry in candidates[:_HIGH_CONFIDENCE_MAX]]
     except Exception:
         return []
 
@@ -129,8 +129,8 @@ def _expired_entries(repo, collection: str, now_ts: float) -> list:
     """Return entries with expires_at in the past, sorted oldest-first."""
     try:
         result = []
-        for e in repo.get_all(collection):
-            raw = e.metadata.get("expires_at")
+        for entry in repo.get_all(collection):
+            raw = entry.metadata.get("expires_at")
             if raw is None:
                 continue
             try:
@@ -138,9 +138,9 @@ def _expired_entries(repo, collection: str, now_ts: float) -> list:
             except (ValueError, TypeError):
                 continue
             if exp < now_ts:
-                result.append((exp, e))
+                result.append((exp, entry))
         result.sort(key=lambda x: x[0])
-        return [e for _, e in result]
+        return [entry for _, entry in result]
     except Exception:
         return []
 
@@ -181,7 +181,7 @@ def main():
         get_memory = GetMemoryUseCase(repo)
 
         collections = ListCollectionsUseCase(repo).execute()
-        current_count = sum(c.count for c in collections)
+        current_count = sum(col_info.count for col_info in collections)
 
         repo_focus = _focus_text(get_memory, ctx.collection) if ctx.collection != WORKSPACE_COLLECTION else None
         global_focus = _focus_text(get_memory, GLOBAL_COLLECTION)
@@ -195,7 +195,7 @@ def main():
             _query = repo_focus or f"{ctx.collection} patterns and best practices"
             try:
                 _results = repo.query(expert_collection, _query, n_results=3, max_age_days=None)
-                expert_entries = [r for r in _results if r.id != FOCUS_ID][:2]
+                expert_entries = [result for result in _results if result.id != FOCUS_ID][:2]
             except Exception:
                 pass
 
@@ -215,7 +215,7 @@ def main():
                 block += f"\n{_truncate(expert_focus, _FOCUS_PREVIEW_CHARS)}"
             if expert_entries:
                 block += "\nRelevant past learnings:\n" + "\n".join(
-                    f"- {_truncate(e.text, 200)}" for e in expert_entries
+                    f"- {_truncate(entry.text, 200)}" for entry in expert_entries
                 )
             parts.append(block)
         if expert_collection:
@@ -229,7 +229,7 @@ def main():
             if _hc_entries:
                 parts.append(
                     "[always-present]\n"
-                    + "\n".join(f"- {_truncate(e.text, _HIGH_CONFIDENCE_CHARS)}" for e in _hc_entries)
+                    + "\n".join(f"- {_truncate(entry.text, _HIGH_CONFIDENCE_CHARS)}" for entry in _hc_entries)
                 )
         _now_ts = time.time()
         _expired: list = []
@@ -239,11 +239,11 @@ def main():
         if _expired:
             from datetime import datetime
             _exp_lines = []
-            for e in _expired[:_EXPIRED_MAX]:
-                exp_ts = float(e.metadata.get("expires_at", 0))
+            for entry in _expired[:_EXPIRED_MAX]:
+                exp_ts = float(entry.metadata.get("expires_at", 0))
                 exp_date = datetime.fromtimestamp(exp_ts).strftime("%Y-%m-%d")
-                preview = _truncate(e.text, _EXPIRED_PREVIEW_CHARS)
-                _exp_lines.append(f"⏰ {e.id}: \"{preview}\" (expired {exp_date})")
+                preview = _truncate(entry.text, _EXPIRED_PREVIEW_CHARS)
+                _exp_lines.append(f"⏰ {entry.id}: \"{preview}\" (expired {exp_date})")
             parts.append("[ai-mem expired]\n" + "\n".join(_exp_lines))
 
         if ctx.has_claude_md:
@@ -261,7 +261,7 @@ def main():
 
         git_commits = _git_commits_since(DB_PATH)
         if git_commits:
-            parts.append("Git commits since last session:\n" + "\n".join(f"  {c}" for c in git_commits))
+            parts.append("Git commits since last session:\n" + "\n".join(f"  {commit}" for commit in git_commits))
 
         _write_prev_session(DB_PATH, current_count)
 

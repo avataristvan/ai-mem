@@ -54,9 +54,9 @@ class SplitMemoryUseCase:
             entries = self._repo.get_by_ids(collection, [entry_id])
         else:
             entries = [
-                e for e in self._repo.get_all(collection)
-                if int(e.metadata.get("access_count", 0)) >= SPLIT_THRESHOLD_ACCESSES
-                and len(e.text) >= SPLIT_MIN_TEXT_CHARS
+                entry for entry in self._repo.get_all(collection)
+                if int(entry.metadata.get("access_count", 0)) >= SPLIT_THRESHOLD_ACCESSES
+                and len(entry.text) >= SPLIT_MIN_TEXT_CHARS
             ]
 
         return [self._split_one(collection, entry) for entry in entries]
@@ -94,10 +94,10 @@ class SplitMemoryUseCase:
             )
 
         self._repo.delete(collection, [entry.id])
-        new_ids = [e["id"] for e in sub_entries]
+        new_ids = [entry["id"] for entry in sub_entries]
         self._add_uc.execute(
             collection=collection,
-            documents=[e["text"] for e in sub_entries],
+            documents=[entry["text"] for entry in sub_entries],
             ids=new_ids,
         )
         return SplitResult(original_id=entry.id, new_ids=new_ids)

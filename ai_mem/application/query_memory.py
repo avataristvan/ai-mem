@@ -30,17 +30,17 @@ class QueryMemoryUseCase:
         if not results:
             return []
 
-        for i, r in enumerate(results):
-            r.rank = i + 1
+        for idx, result in enumerate(results):
+            result.rank = idx + 1
 
-        returned_ids = {r.id for r in results}
+        returned_ids = {result.id for result in results}
         self._session_hits[collection].update(returned_ids)
 
         # When a score threshold is set, only track entries that are a strong enough
         # semantic match. Weak path-based matches (posttool_hook) would otherwise
         # receive immediate credit despite being unrelated to the actual task.
         tracked_ids = (
-            {r.id for r in results if r.score >= min_score_for_tracking}
+            {result.id for result in results if result.score >= min_score_for_tracking}
             if min_score_for_tracking is not None
             else returned_ids
         )

@@ -156,14 +156,14 @@ REBUTTAL:
 
 def _format_entries(entries: list[MemoryEntry]) -> str:
     parts = []
-    for e in entries:
-        col = e.metadata.get("_collection", "?")
+    for entry in entries:
+        col = entry.metadata.get("_collection", "?")
         shown: dict[str, object] = {}
-        if t := e.metadata.get("type"):
-            shown["type"] = t
-        if ac := e.metadata.get("access_count"):
-            shown["access_count"] = int(ac)
-        if raw_edges := e.metadata.get("edges"):
+        if entry_type := entry.metadata.get("type"):
+            shown["type"] = entry_type
+        if access_count := entry.metadata.get("access_count"):
+            shown["access_count"] = int(access_count)
+        if raw_edges := entry.metadata.get("edges"):
             try:
                 edges = json.loads(raw_edges)
                 if edges:
@@ -171,10 +171,10 @@ def _format_entries(entries: list[MemoryEntry]) -> str:
             except (json.JSONDecodeError, KeyError, TypeError):
                 pass
         meta_str = (
-            " [" + ", ".join(f"{k}={v}" for k, v in shown.items()) + "]"
+            " [" + ", ".join(f"{key}={val}" for key, val in shown.items()) + "]"
             if shown else ""
         )
-        parts.append(f"[{e.id}] (collection: {col}){meta_str}\n{e.text}")
+        parts.append(f"[{entry.id}] (collection: {col}){meta_str}\n{entry.text}")
     return "\n\n---\n\n".join(parts) if parts else "(empty)"
 
 
@@ -190,7 +190,7 @@ def _call(model_key: str, prompt: str) -> str:
 
 
 def _collection_context(collections: list[str]) -> str:
-    return _COLLECTION_CONTEXT.format(collections="\n".join(f"  - {c}" for c in collections))
+    return _COLLECTION_CONTEXT.format(collections="\n".join(f"  - {col_name}" for col_name in collections))
 
 
 def _confidence_report(entries: list[MemoryEntry]) -> str:
@@ -202,8 +202,8 @@ def _confidence_report(entries: list[MemoryEntry]) -> str:
     decay: list[tuple[str, str, float, int]] = []    # (id, collection, confidence, access_count)
     promote: list[tuple[str, str, float, int, str]] = []  # (id, collection, confidence, access_count, type)
 
-    for e in entries:
-        raw = e.metadata.get("confidence")
+    for entry in entries:
+        raw = entry.metadata.get("confidence")
         if raw is None:
             continue
         try:
@@ -211,14 +211,14 @@ def _confidence_report(entries: list[MemoryEntry]) -> str:
         except (ValueError, TypeError):
             continue
 
-        col = e.metadata.get("_collection", "?")
-        ac = int(e.metadata.get("access_count", 0))
-        entry_type = str(e.metadata.get("type", ""))
+        col = entry.metadata.get("_collection", "?")
+        access_count = int(entry.metadata.get("access_count", 0))
+        entry_type = str(entry.metadata.get("type", ""))
 
         if conf < 0.3:
-            decay.append((e.id, col, conf, ac))
-        if conf > 0.9 and ac >= 3:
-            promote.append((e.id, col, conf, ac, entry_type))
+            decay.append((entry.id, col, conf, access_count))
+        if conf > 0.9 and access_count >= 3:
+            promote.append((entry.id, col, conf, access_count, entry_type))
 
     if not decay and not promote:
         return ""
@@ -233,8 +233,8 @@ def _confidence_report(entries: list[MemoryEntry]) -> str:
             "Consider DELETE or mem-dream review:",
             "",
         ]
-        for eid, col, conf, ac in decay:
-            sections.append(f"- `{eid}` ({col}) — confidence={conf:.2f}, access_count={ac}")
+        for eid, col, conf, access_count in decay:
+            sections.append(f"- `{eid}` ({col}) — confidence={conf:.2f}, access_count={access_count}")
 
     if promote:
         sections += [
@@ -244,16 +244,16 @@ def _confidence_report(entries: list[MemoryEntry]) -> str:
             "Consider promoting to CLAUDE.md (stable, frequently accessed):",
             "",
         ]
-        for eid, col, conf, ac, etype in promote:
+        for eid, col, conf, access_count, etype in promote:
             type_tag = f", type={etype}" if etype else ""
-            sections.append(f"- `{eid}` ({col}) — confidence={conf:.2f}, access_count={ac}{type_tag}")
+            sections.append(f"- `{eid}` ({col}) — confidence={conf:.2f}, access_count={access_count}{type_tag}")
 
     return "\n" + "\n".join(sections)
 
 
 def _split_candidates(synthesis: str, all_entries: list[MemoryEntry]) -> str:
     """Return a formatted section listing SPLIT proposals from the synthesis, or empty string."""
-    id_to_preview: dict[str, str] = {e.id: e.text[:60].replace("\n", " ") for e in all_entries}
+    id_to_preview: dict[str, str] = {entry.id: entry.text[:60].replace("\n", " ") for entry in all_entries}
     found = _SPLIT_RE.findall(synthesis)
     if not found:
         return ""
@@ -272,8 +272,8 @@ def _split_candidates(synthesis: str, all_entries: list[MemoryEntry]) -> str:
 def _propagation_candidates(synthesis: str, source_collections: set[str]) -> list[tuple[str, str]]:
     """Return (entry_id, target_collection) pairs where target differs from all source collections."""
     candidates = []
-    for m in _ADD_TARGET_RE.finditer(synthesis):
-        entry_id, target = m.group(1), m.group(2).strip()
+    for match in _ADD_TARGET_RE.finditer(synthesis):
+        entry_id, target = match.group(1), match.group(2).strip()
         if target not in source_collections:
             candidates.append((entry_id, target))
     return candidates
@@ -299,13 +299,13 @@ class DreamMemoryUseCase:
         elif collection:
             collections = [collection]
         else:
-            collections = [c.name for c in self._repo.list_collections()]
+            collections = [col_info.name for col_info in self._repo.list_collections()]
 
         all_entries = []
         for col in collections:
             entries = self._repo.get_all(col)
-            for e in entries:
-                e.metadata["_collection"] = col
+            for entry in entries:
+                entry.metadata["_collection"] = col
             all_entries.extend(entries)
 
         if not all_entries:
@@ -346,7 +346,7 @@ class DreamMemoryUseCase:
             deleted = self._auto_apply_deletes(synthesis, all_entries)
             if deleted:
                 report += "\n\n---\n\n## Auto-Applied Deletions\n\n" + "\n".join(
-                    f"- Deleted `{d}`" for d in deleted
+                    f"- Deleted `{deleted_id}`" for deleted_id in deleted
                 )
             else:
                 report += "\n\n---\n\n## Auto-Applied Deletions\n\nNone (no high-confidence DELETE actions found)."
@@ -360,38 +360,38 @@ class DreamMemoryUseCase:
         return result, f"# Dream Log — {ts} — single:{model_key}\n\n{result}"
 
     def _run_hier(self, ts: str, memories: str, col_ctx: str) -> tuple[str, str]:
-        a = _call("haiku", _P_HAIKU.format(memories=memories, collection_context=col_ctx))
-        b = _call("sonnet", _P_SONNET_HIER.format(
-            memories=memories, collection_context=col_ctx, action_format=_ACTION_FORMAT, a=a,
+        haiku_pass = _call("haiku", _P_HAIKU.format(memories=memories, collection_context=col_ctx))
+        sonnet_synthesis = _call("sonnet", _P_SONNET_HIER.format(
+            memories=memories, collection_context=col_ctx, action_format=_ACTION_FORMAT, a=haiku_pass,
         ))
         report = (
             f"# Dream Log — {ts} — hier\n\n"
-            f"## Haiku: First Pass\n\n{a}\n\n---\n\n"
-            f"## Sonnet: Synthesis\n\n{b}"
+            f"## Haiku: First Pass\n\n{haiku_pass}\n\n---\n\n"
+            f"## Sonnet: Synthesis\n\n{sonnet_synthesis}"
         )
-        return b, report
+        return sonnet_synthesis, report
 
     def _run_team(self, ts: str, memories: str, col_ctx: str) -> tuple[str, str]:
-        a = _call("haiku", _P_HAIKU.format(memories=memories, collection_context=col_ctx))
-        b = _call("sonnet", _P_SONNET_CRITIQUE.format(
-            memories=memories, collection_context=col_ctx, a=a,
+        haiku_analysis = _call("haiku", _P_HAIKU.format(memories=memories, collection_context=col_ctx))
+        sonnet_critique = _call("sonnet", _P_SONNET_CRITIQUE.format(
+            memories=memories, collection_context=col_ctx, a=haiku_analysis,
         ))
-        c = _call("haiku", _P_HAIKU_REBUTTAL.format(a=a, b=b))
-        d = _call("sonnet", _P_SONNET_FINAL.format(
-            collection_context=col_ctx, action_format=_ACTION_FORMAT, a=a, b=b, c=c,
+        haiku_rebuttal = _call("haiku", _P_HAIKU_REBUTTAL.format(a=haiku_analysis, b=sonnet_critique))
+        sonnet_final = _call("sonnet", _P_SONNET_FINAL.format(
+            collection_context=col_ctx, action_format=_ACTION_FORMAT, a=haiku_analysis, b=sonnet_critique, c=haiku_rebuttal,
         ))
         report = (
             f"# Dream Log — {ts} — team\n\n"
-            f"## Haiku: Initial Analysis\n\n{a}\n\n---\n\n"
-            f"## Sonnet: Critique\n\n{b}\n\n---\n\n"
-            f"## Haiku: Rebuttal\n\n{c}\n\n---\n\n"
-            f"## Sonnet: Final Synthesis\n\n{d}"
+            f"## Haiku: Initial Analysis\n\n{haiku_analysis}\n\n---\n\n"
+            f"## Sonnet: Critique\n\n{sonnet_critique}\n\n---\n\n"
+            f"## Haiku: Rebuttal\n\n{haiku_rebuttal}\n\n---\n\n"
+            f"## Sonnet: Final Synthesis\n\n{sonnet_final}"
         )
-        return d, report
+        return sonnet_final, report
 
     def _auto_apply_deletes(self, synthesis: str, all_entries: list[MemoryEntry]) -> list[str]:
         """Parse DELETE <id>: lines from synthesis and delete matching entries."""
-        id_to_col = {e.id: e.metadata["_collection"] for e in all_entries}
+        id_to_col = {entry.id: entry.metadata["_collection"] for entry in all_entries}
         found_ids = _DELETE_RE.findall(synthesis)
         deleted = []
         for id_ in found_ids:

@@ -32,8 +32,8 @@ def find_memory_dir(cwd: Path | None = None, home: Path | None = None) -> Path |
 
 
 def _parse_type(content: str) -> str:
-    m = re.search(r'^type:\s*(\S+)', content, re.MULTILINE)
-    return m.group(1).strip("\"'") if m else ""
+    match = re.search(r'^type:\s*(\S+)', content, re.MULTILINE)
+    return match.group(1).strip("\"'") if match else ""
 
 
 def read_index(memory_dir: Path) -> tuple[list[IndexEntry], int]:
@@ -44,10 +44,10 @@ def read_index(memory_dir: Path) -> tuple[list[IndexEntry], int]:
     lines = memory_md.read_text(encoding="utf-8").splitlines()
     entries: list[IndexEntry] = []
     for line in lines:
-        m = re.match(r'-\s+\[([^\]]+)\]\(([^)]+\.md)\)', line)
-        if not m:
+        match = re.match(r'-\s+\[([^\]]+)\]\(([^)]+\.md)\)', line)
+        if not match:
             continue
-        title, filename = m.group(1), m.group(2)
+        title, filename = match.group(1), match.group(2)
         fpath = memory_dir / filename
         mem_type = _parse_type(fpath.read_text(encoding="utf-8")) if fpath.exists() else ""
         mtime = fpath.stat().st_mtime if fpath.exists() else 0.0
@@ -84,7 +84,7 @@ def auto_demote(
     stale_cutoff = time.time() - stale_days * 86400 if stale_days is not None else None
     is_over_threshold = line_count >= threshold
     has_stale = stale_cutoff is not None and any(
-        e.mtime > 0 and e.mtime < stale_cutoff for e in entries
+        entry.mtime > 0 and entry.mtime < stale_cutoff for entry in entries
     )
     if not is_over_threshold and not has_stale:
         return []
@@ -149,8 +149,8 @@ def auto_demote(
     if lines_to_remove:
         original = memory_md.read_text(encoding="utf-8")
         kept = [
-            l for l in original.splitlines(keepends=True)
-            if l.rstrip("\n") not in lines_to_remove
+            line for line in original.splitlines(keepends=True)
+            if line.rstrip("\n") not in lines_to_remove
         ]
         memory_md.write_text("".join(kept), encoding="utf-8")
 

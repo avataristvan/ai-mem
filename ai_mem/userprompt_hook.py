@@ -86,7 +86,7 @@ def _antipattern_hits(query_uc, collection: str, query: str):
             n_results=ANTIPATTERN_TOP_K,
             type_filter="anti-pattern",
         )
-        return [r for r in results if (r.score or 0.0) >= ANTIPATTERN_MIN_SCORE]
+        return [result for result in results if (result.score or 0.0) >= ANTIPATTERN_MIN_SCORE]
     except Exception:
         return []
 
@@ -99,7 +99,7 @@ def _dilemma_hits(query_uc, collection: str, query: str):
             n_results=DILEMMA_TOP_K,
             type_filter="dilemma",
         )
-        return [r for r in results if (r.score or 0.0) >= DILEMMA_MIN_SCORE]
+        return [result for result in results if (result.score or 0.0) >= DILEMMA_MIN_SCORE]
     except Exception:
         return []
 
@@ -127,7 +127,7 @@ def main():
         return
 
     global_results = _hits(query_uc, GLOBAL_COLLECTION, query)
-    global_hits = [r for r in global_results if (r.score or 0.0) >= CONTEXT_MIN_SCORE]
+    global_hits = [result for result in global_results if (result.score or 0.0) >= CONTEXT_MIN_SCORE]
 
     repo_hits = []
     repo_collection = None
@@ -138,7 +138,7 @@ def main():
         if ctx.collection not in (GLOBAL_COLLECTION, WORKSPACE_COLLECTION):
             repo_collection = ctx.collection
             repo_results = _hits(query_uc, repo_collection, query)
-            repo_hits = [r for r in repo_results if (r.score or 0.0) >= CONTEXT_MIN_SCORE]
+            repo_hits = [result for result in repo_results if (result.score or 0.0) >= CONTEXT_MIN_SCORE]
             antipattern_results = _antipattern_hits(query_uc, repo_collection, query)
             dilemma_results = _dilemma_hits(query_uc, repo_collection, query)
     except Exception:
@@ -148,9 +148,9 @@ def main():
         return
 
     collected: list[tuple[str, Any]] = []
-    collected.extend((GLOBAL_COLLECTION, r) for r in global_hits)
+    collected.extend((GLOBAL_COLLECTION, result) for result in global_hits)
     if repo_collection:
-        collected.extend((repo_collection, r) for r in repo_hits)
+        collected.extend((repo_collection, result) for result in repo_hits)
 
     try:
         from ai_mem.session_stats import record_injection
@@ -164,8 +164,8 @@ def main():
     # Per-session dedup: skip entries already injected in this session.
     already_injected = _load_session_injected(DB_PATH)
     collected = [(coll, r) for coll, r in collected if getattr(r, "id", None) not in already_injected or getattr(r, "id", None) is None]
-    antipattern_results = [r for r in antipattern_results if getattr(r, "id", None) not in already_injected]
-    dilemma_results = [r for r in dilemma_results if getattr(r, "id", None) not in already_injected]
+    antipattern_results = [result for result in antipattern_results if getattr(result, "id", None) not in already_injected]
+    dilemma_results = [result for result in dilemma_results if getattr(result, "id", None) not in already_injected]
 
     # Combined budget cap: include entries until MAX_TOTAL_CHARS is reached.
     budget_collected: list[tuple[str, Any]] = []
@@ -186,12 +186,12 @@ def main():
 
     if dilemma_results:
         lines.append("[ai-mem dilemmas]")
-        for r in dilemma_results:
-            text = r.text[:MAX_CHARS_PER_DILEMMA]
-            if len(r.text) > MAX_CHARS_PER_DILEMMA:
+        for result in dilemma_results:
+            text = result.text[:MAX_CHARS_PER_DILEMMA]
+            if len(result.text) > MAX_CHARS_PER_DILEMMA:
                 text += "..."
             lines.append(f"⚖ {text}")
-            entry_id = getattr(r, "id", None)
+            entry_id = getattr(result, "id", None)
             if entry_id is not None:
                 injected_ids.add(entry_id)
 
@@ -199,14 +199,14 @@ def main():
         if lines:
             lines.append("")
         lines.append("[ai-mem warnings]")
-        for r in antipattern_results:
-            text = r.text[:MAX_CHARS_PER_ANTIPATTERN]
-            if len(r.text) > MAX_CHARS_PER_ANTIPATTERN:
+        for result in antipattern_results:
+            text = result.text[:MAX_CHARS_PER_ANTIPATTERN]
+            if len(result.text) > MAX_CHARS_PER_ANTIPATTERN:
                 text += "..."
             lines.append(f"⚠ {text}")
-            if "Affected:" in r.text:
+            if "Affected:" in result.text:
                 lines.append(ANTICIPATION_QUESTION)
-            entry_id = getattr(r, "id", None)
+            entry_id = getattr(result, "id", None)
             if entry_id is not None:
                 injected_ids.add(entry_id)
 

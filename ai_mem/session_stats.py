@@ -37,4 +37,4 @@ def injection_rate(stats_path: Path, scope: str) -> float:
     records = data.get(scope, [])
     if not records:
         return 0.0
-    return sum(1 for r in records if r.get("injected")) / len(records)
+    return sum(1 for record in records if record.get("injected")) / len(records)

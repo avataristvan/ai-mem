@@ -47,9 +47,9 @@ class ChromaMemoryRepository:
     def upsert(self, collection: str, entries: list[MemoryEntry]) -> None:
         col = self._col(collection)
         col.upsert(
-            documents=[e.text for e in entries],
-            ids=[e.id for e in entries],
-            metadatas=[e.metadata for e in entries],
+            documents=[entry.text for entry in entries],
+            ids=[entry.id for entry in entries],
+            metadatas=[entry.metadata for entry in entries],
         )
 
     def query(
@@ -90,13 +90,13 @@ class ChromaMemoryRepository:
 
         return [
             QueryResult(
-                rank=i + 1,
+                rank=idx + 1,
                 id=id_,
                 score=round(1.0 - dist, 4),
                 text=doc,
                 metadata=meta or {},
             )
-            for i, (doc, id_, meta, dist) in enumerate(zip(docs, ids, metas, distances))
+            for idx, (doc, id_, meta, dist) in enumerate(zip(docs, ids, metas, distances))
         ]
 
     def get_by_ids(self, collection: str, ids: list[str]) -> list[MemoryEntry]:
@@ -115,7 +115,7 @@ class ChromaMemoryRepository:
         ]
 
     def list_collections(self) -> list[CollectionInfo]:
-        return [CollectionInfo(name=c.name, count=c.count()) for c in self._client.list_collections()]
+        return [CollectionInfo(name=col_info.name, count=col_info.count()) for col_info in self._client.list_collections()]
 
     def delete(self, collection: str, ids: list[str] | None) -> int:
         if ids:
@@ -153,10 +153,10 @@ class ChromaMemoryRepository:
         now_ts = datetime.now(tz=timezone.utc).timestamp()
         new_metas = []
         for meta in existing_metas:
-            m = dict(meta or {})
-            m["last_accessed_at"] = now_ts
-            m["access_count"] = int(m.get("access_count", 0)) + 1
-            new_metas.append(m)
+            meta_copy = dict(meta or {})
+            meta_copy["last_accessed_at"] = now_ts
+            meta_copy["access_count"] = int(meta_copy.get("access_count", 0)) + 1
+            new_metas.append(meta_copy)
 
         col.update(ids=existing_ids, metadatas=new_metas)
 
@@ -198,13 +198,13 @@ class ChromaMemoryRepository:
         edges = _parse_edges(existing_meta.get("edges", "[]"))
 
         # Dedup: skip if the same (target_id, edge_type) already exists
-        for e in edges:
-            if e.target_id == edge.target_id and e.edge_type == edge.edge_type:
+        for existing_edge in edges:
+            if existing_edge.target_id == edge.target_id and existing_edge.edge_type == edge.edge_type:
                 return
 
         edges.append(edge)
         existing_meta["edges"] = json.dumps(
-            [{"target_id": e.target_id, "edge_type": e.edge_type} for e in edges]
+            [{"target_id": existing_edge.target_id, "edge_type": existing_edge.edge_type} for existing_edge in edges]
         )
         col.update(ids=[source_id], metadatas=[existing_meta])
 

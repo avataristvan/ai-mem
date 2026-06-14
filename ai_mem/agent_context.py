@@ -80,9 +80,9 @@ def _load_user_config(
         return [], frozenset()
 
     sigs: list[tuple[str, list[str]]] = [
-        (e["name"], list(e["markers"]))
-        for e in data.get("signatures", [])
-        if e.get("name") and e.get("markers")
+        (sig["name"], list(sig["markers"]))
+        for sig in data.get("signatures", [])
+        if sig.get("name") and sig.get("markers")
     ]
     inject: frozenset[str] = frozenset(data.get("inject_agents", []))
     return sigs, inject
@@ -174,7 +174,7 @@ def _parse_agent_type(transcript_path: str) -> str | None:
         content = Path(transcript_path).read_text(errors="replace", encoding="utf-8")[:4096]
         lower = content.lower()
         for agent_type, markers in _SIGNATURES:
-            if all(m.lower() in lower for m in markers):
+            if all(marker.lower() in lower for marker in markers):
                 return agent_type
     except Exception:
         pass

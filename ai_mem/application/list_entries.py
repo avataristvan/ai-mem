@@ -20,4 +20,4 @@ class ListEntriesUseCase:
 
     def execute(self, collection: str) -> list[dict]:
         entries = self._repo.get_all(collection)
-        return [{"id": e.id, "title": _title(e.text)} for e in entries]
+        return [{"id": entry.id, "title": _title(entry.text)} for entry in entries]

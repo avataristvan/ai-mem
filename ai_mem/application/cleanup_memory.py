@@ -22,7 +22,7 @@ class CleanupResult:
 
     @property
     def total(self) -> int:
-        return sum(s.total for s in self.collections.values())
+        return sum(stats.total for stats in self.collections.values())
 
 
 class CleanupMemoryUseCase:
@@ -39,7 +39,7 @@ class CleanupMemoryUseCase:
         - expired: entries past their TTL (always run)
         - stale: entries whose last_accessed_at is older than stale_after_days (only if set)
         """
-        targets = [collection] if collection else [c.name for c in self._repo.list_collections()]
+        targets = [collection] if collection else [col_info.name for col_info in self._repo.list_collections()]
 
         collections: dict[str, CollectionCleanupStats] = {}
         for col in targets:

@@ -20,7 +20,7 @@ class AddEdgeUseCase:
         Raises ValueError if either entry does not exist in the collection.
         Silently deduplicates if the same (target_id, edge_type) already exists.
         """
-        fetched_ids = {e.id for e in self._repo.get_by_ids(collection, [source_id, target_id])}
+        fetched_ids = {entry.id for entry in self._repo.get_by_ids(collection, [source_id, target_id])}
         missing = [id_ for id_ in (source_id, target_id) if id_ not in fetched_ids]
         if missing:
             raise ValueError(f"Entry ID(s) not found in '{collection}': {missing}")

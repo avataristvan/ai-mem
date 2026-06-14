@@ -54,12 +54,12 @@ def main():
     file_name = Path(file_path).name
     query = f"{tool_name} {file_name} {file_path}"
 
-    collected: list[tuple[str, object]] = [(GLOBAL_COLLECTION, r) for r in _hits(query_uc, GLOBAL_COLLECTION, query)]
+    collected: list[tuple[str, object]] = [(GLOBAL_COLLECTION, result) for result in _hits(query_uc, GLOBAL_COLLECTION, query)]
 
     try:
         ctx = detect_repo_context()
         if ctx.collection not in (GLOBAL_COLLECTION, WORKSPACE_COLLECTION):
-            collected.extend((ctx.collection, r) for r in _hits(query_uc, ctx.collection, query))
+            collected.extend((ctx.collection, result) for result in _hits(query_uc, ctx.collection, query))
     except Exception:
         pass
 

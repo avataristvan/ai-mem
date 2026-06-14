@@ -55,8 +55,8 @@ def main() -> None:
     expert_collections: list[str] | None = None
     focus_hint: str | None = None
     if args.expert:
-        all_cols = [c.name for c in repo.list_collections()]
-        expert_collections = [c for c in all_cols if c.startswith("subagent.")]
+        all_cols = [col_info.name for col_info in repo.list_collections()]
+        expert_collections = [col_name for col_name in all_cols if col_name.startswith("subagent.")]
         if not expert_collections:
             print("No subagent.* collections found.", file=sys.stderr)
             return
@@ -64,7 +64,7 @@ def main() -> None:
         print(f"[dream:expert] collections: {expert_collections}", file=sys.stderr)
 
     if args.dry_run:
-        cols = expert_collections or ([args.collection] if args.collection else [c.name for c in repo.list_collections()])
+        cols = expert_collections or ([args.collection] if args.collection else [col_info.name for col_info in repo.list_collections()])
         total = 0
         for col in cols:
             entries = repo.get_all(col)

@@ -303,16 +303,16 @@ def _suggest_pattern_links(collection: str, documents: list[str], stored_ids: li
                 n_results=_PATTERN_LINK_MAX,
                 type_filter="pattern",
             )
-            for r in results:
-                if r.score < _PATTERN_LINK_THRESHOLD:
+            for result in results:
+                if result.score < _PATTERN_LINK_THRESHOLD:
                     continue
-                pair = (source_id, r.id)
+                pair = (source_id, result.id)
                 if pair in seen_pairs:
                     continue
                 seen_pairs.add(pair)
-                preview = r.text[:60].replace("\n", " ")
+                preview = result.text[:60].replace("\n", " ")
                 lines.append(
-                    f'  mem_link(source_id="{source_id}", target_id="{r.id}",'
+                    f'  mem_link(source_id="{source_id}", target_id="{result.id}",'
                     f' edge_type="contradicts", collection="{collection}")'
                 )
                 lines.append(f"  # {preview}")
@@ -339,10 +339,10 @@ def _detect_contradictions(collection: str, type_tag: str, documents: list[str])
                 n_results=_CONTRADICTION_MAX,
                 type_filter=opposite,
             )
-            seen_ids = {h["id"] for h in hits}
-            for r in results:
-                if CONTRADICTION_THRESHOLD <= (r.score or 0.0) < _CONTRADICTION_UPPER and r.id not in seen_ids:
-                    hits.append({"id": r.id, "score": round(r.score, 2), "preview": r.text[:120]})
+            seen_ids = {hit["id"] for hit in hits}
+            for result in results:
+                if CONTRADICTION_THRESHOLD <= (result.score or 0.0) < _CONTRADICTION_UPPER and result.id not in seen_ids:
+                    hits.append({"id": result.id, "score": round(result.score, 2), "preview": result.text[:120]})
     except Exception:
         pass
     return hits
@@ -356,11 +356,11 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         metadatas = arguments.get("metadatas")
         type_tag = arguments.get("type")
         if type_tag is not None:
-            n = len(arguments["documents"])
+            count = len(arguments["documents"])
             if metadatas is None:
-                metadatas = [{} for _ in range(n)]
-            for m in metadatas:
-                m.setdefault("type", type_tag)
+                metadatas = [{} for _ in range(count)]
+            for meta_entry in metadatas:
+                meta_entry.setdefault("type", type_tag)
         count = _add.execute(
             collection=collection,
             documents=arguments["documents"],
@@ -405,25 +405,25 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         out = {
             "results": [
                 {
-                    "rank": r.rank,
-                    "id": r.id,
-                    "score": r.score,
-                    "confidence": float(r.metadata.get("confidence", 0.0)),
-                    "metadata": r.metadata,
-                    "text": r.text,
+                    "rank": result.rank,
+                    "id": result.id,
+                    "score": result.score,
+                    "confidence": float(result.metadata.get("confidence", 0.0)),
+                    "metadata": result.metadata,
+                    "text": result.text,
                 }
-                for r in results
+                for result in results
             ],
             "split_hints": [
-                {"id": h.id, "text_preview": h.text_preview, "access_count": h.access_count}
-                for h in split_hints
+                {"id": hint.id, "text_preview": hint.text_preview, "access_count": hint.access_count}
+                for hint in split_hints
             ],
         }
         return [types.TextContent(type="text", text=json.dumps(out, indent=2, ensure_ascii=False))]
 
     if name == "mem_get":
         entries = _get_memory.execute(collection, arguments["ids"])
-        out = [{"id": e.id, "text": e.text, "metadata": e.metadata} for e in entries]
+        out = [{"id": entry.id, "text": entry.text, "metadata": entry.metadata} for entry in entries]
         return [types.TextContent(type="text", text=json.dumps(out, indent=2, ensure_ascii=False))]
 
     if name == "mem_list":
@@ -432,7 +432,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             entries = _list_entries.execute(col_arg)
             return [types.TextContent(type="text", text=json.dumps(entries, indent=2, ensure_ascii=False))]
         cols = _list.execute()
-        return [types.TextContent(type="text", text=json.dumps([{"name": c.name, "count": c.count} for c in cols], indent=2))]
+        return [types.TextContent(type="text", text=json.dumps([{"name": col_info.name, "count": col_info.count} for col_info in cols], indent=2))]
 
     if name == "mem_delete":
         affected = _delete.execute(collection=collection, ids=arguments.get("ids"))
@@ -444,7 +444,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         col_arg = arguments.get("collection")
         result = _cleanup.execute(col_arg, stale_after_days=arguments.get("stale_after_days"))
         detail = json.dumps(
-            {k: {"expired": v.expired, "stale": v.stale} for k, v in result.collections.items()},
+            {col_name: {"expired": col_stats.expired, "stale": col_stats.stale} for col_name, col_stats in result.collections.items()},
             indent=2,
         )
         return [types.TextContent(type="text", text=f"Cleaned up {result.total} entry/entries.\n{detail}")]
@@ -462,15 +462,15 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         results = await asyncio.to_thread(_split.execute, collection, entry_id)
         out = [
             {
-                "original_id": r.original_id,
-                "new_ids": r.new_ids,
-                "skipped": r.skipped,
-                **({"skip_reason": r.skip_reason} if r.skipped else {}),
+                "original_id": result.original_id,
+                "new_ids": result.new_ids,
+                "skipped": result.skipped,
+                **({"skip_reason": result.skip_reason} if result.skipped else {}),
             }
-            for r in results
+            for result in results
         ]
         total = len(results)
-        succeeded = sum(1 for r in results if not r.skipped)
+        succeeded = sum(1 for result in results if not result.skipped)
         summary = f"Split {succeeded}/{total} entries."
         return [types.TextContent(type="text", text=f"{summary}\n{json.dumps(out, indent=2)}")]
 
@@ -494,15 +494,15 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             collection=collection,
             entry_id=arguments["entry_id"],
         )
-        out = [{"target_id": e.target_id, "edge_type": e.edge_type} for e in edges]
+        out = [{"target_id": edge.target_id, "edge_type": edge.edge_type} for edge in edges]
         return [types.TextContent(type="text", text=json.dumps(out, indent=2))]
 
     if name == "mem_boost":
         col = arguments.get("collection") or DEFAULT_COLLECTION
         ids = arguments["ids"]
         delta = float(arguments["delta"])
-        n = BoostConfidenceUseCase(_repo).execute(col, ids, delta)
-        return [types.TextContent(type="text", text=f"Boosted {n} entr{'y' if n == 1 else 'ies'} in '{col}'.")]
+        boosted = BoostConfidenceUseCase(_repo).execute(col, ids, delta)
+        return [types.TextContent(type="text", text=f"Boosted {boosted} entr{'y' if boosted == 1 else 'ies'} in '{col}'.")]
 
     raise ValueError(f"Unknown tool: {name}")
 

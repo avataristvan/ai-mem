@@ -27,11 +27,11 @@ class AddMemoryUseCase:
         now_ts = now.timestamp()
         expires_at = now + timedelta(days=ttl_days) if ttl_days is not None else None
 
-        existing = {e.id: e for e in self._repo.get_by_ids(collection, ids)}
+        existing = {entry.id: entry for entry in self._repo.get_by_ids(collection, ids)}
 
         entries: list[MemoryEntry] = []
-        for i, (doc, id_) in enumerate(zip(documents, ids)):
-            user_meta = dict(metadatas[i]) if metadatas and i < len(metadatas) else {}
+        for idx, (doc, id_) in enumerate(zip(documents, ids)):
+            user_meta = dict(metadatas[idx]) if metadatas and idx < len(metadatas) else {}
             prior_meta = existing[id_].metadata if id_ in existing else {}
 
             prior_confidence = float(prior_meta["confidence"]) if "confidence" in prior_meta else 0.7
