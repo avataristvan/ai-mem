@@ -20,6 +20,7 @@ from ai_mem.application.get_edges import GetEdgesUseCase
 from ai_mem.application.get_memory import GetMemoryUseCase
 from ai_mem.application.list_collections import ListCollectionsUseCase
 from ai_mem.application.list_entries import ListEntriesUseCase
+from ai_mem.application.move_memory import MoveMemoryUseCase
 from ai_mem.application.query_memory import QueryMemoryUseCase
 from ai_mem.application.split_memory import SplitMemoryUseCase
 from ai_mem.application.track_access import TrackAccessUseCase
@@ -48,6 +49,7 @@ _split = SplitMemoryUseCase(_repo, _add)
 _add_edge = AddEdgeUseCase(_repo)
 _get_edges = GetEdgesUseCase(_repo)
 _get_memory = GetMemoryUseCase(_repo)
+_move = MoveMemoryUseCase(_repo)
 
 server = Server("ai-mem")
 
@@ -142,6 +144,28 @@ async def list_tools() -> list[types.Tool]:
                     "ids": {"type": "array", "items": {"type": "string"}, "description": "Entry IDs to delete (omit to drop entire collection)"},
                 },
                 "required": [],
+            },
+        ),
+        types.Tool(
+            name="mem_move",
+            description=(
+                "Move entries from one collection to another, preserving id, text, and all metadata "
+                "verbatim (confidence, access_count, edges, type, etc.) — no manual retyping needed. "
+                "If an id already exists at the target with different text, it is skipped and reported "
+                "under 'conflicts' rather than overwritten (identical text at the target is treated as "
+                "a no-op merge and still moved). "
+                "Caveat: edges reference target_id only, with no collection field — other entries in "
+                "the source collection that referenced a moved entry are not updated and may become "
+                "dangling references."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "ids": {"type": "array", "items": {"type": "string"}, "description": "Entry IDs to move"},
+                    "collection": {"type": "string", "description": f"Source collection (default: '{DEFAULT_COLLECTION}')"},
+                    "to_collection": {"type": "string", "description": "Target collection name"},
+                },
+                "required": ["ids", "to_collection"],
             },
         ),
         types.Tool(
@@ -439,6 +463,22 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         if affected == -1:
             return [types.TextContent(type="text", text=f"Dropped collection '{collection}'.")]
         return [types.TextContent(type="text", text=f"Deleted {affected} entry/entries from '{collection}'.")]
+
+    if name == "mem_move":
+        to_collection = arguments["to_collection"]
+        try:
+            result = _move.execute(from_collection=collection, to_collection=to_collection, ids=arguments["ids"])
+        except ValueError as exc:
+            return [types.TextContent(type="text", text=f"Error: {exc}")]
+        lines = [f"Moved {len(result.moved_ids)} entry/entries from '{collection}' to '{to_collection}'."]
+        if result.not_found_ids:
+            lines.append(f"not_found: {result.not_found_ids}")
+        if result.conflicts:
+            lines.append("conflicts: " + json.dumps(
+                [{"id": c.id, "existing_text_preview": c.existing_text_preview, "source_text_preview": c.source_text_preview} for c in result.conflicts],
+                ensure_ascii=False,
+            ))
+        return [types.TextContent(type="text", text="\n".join(lines))]
 
     if name == "mem_cleanup":
         col_arg = arguments.get("collection")
