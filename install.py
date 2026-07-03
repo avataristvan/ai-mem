@@ -154,6 +154,7 @@ def register_claude():
         "mcp__ai-mem__mem_query",
         "mcp__ai-mem__mem_list",
         "mcp__ai-mem__mem_delete",
+        "mcp__ai-mem__mem_move",
         "mcp__ai-mem__mem_dream",
         "mcp__ai-mem__mem_split",
         "mcp__ai-mem__mem_cleanup",
