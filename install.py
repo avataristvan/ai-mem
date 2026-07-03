@@ -35,6 +35,26 @@ def python_exe() -> str:
     return sys.executable
 
 
+def _upsert_hook_command(entries: list[dict], module: str, command: str, timeout: int, matcher: str | None = None) -> None:
+    """Update the existing hook entry that invokes `module`, or append a new one.
+
+    Matches by module name (`-m <module>`) rather than exact command string, so re-running
+    install.py with a different env prefix (e.g. AI_MEM_WORKSPACE_ROOT changing) updates the
+    existing entry in place instead of appending a duplicate that fires alongside the old one.
+    """
+    marker = f"-m {module} "
+    for entry in entries:
+        for h in entry.get("hooks", []):
+            if marker in h.get("command", ""):
+                h["command"] = command
+                h["timeout"] = timeout
+                return
+    new_entry = {"hooks": [{"type": "command", "command": command, "timeout": timeout}]}
+    if matcher is not None:
+        new_entry["matcher"] = matcher
+    entries.append(new_entry)
+
+
 # ── installation steps ────────────────────────────────────────────────────────
 
 def install_package():
@@ -42,7 +62,24 @@ def install_package():
     run([python_exe(), "-m", "pip", "install", "-e", str(REPO_ROOT), "--quiet"])
 
 
-def register_claude():
+def prompt_workspace_root() -> str:
+    """Ask the user for their workspace root directory. Returns empty string if skipped."""
+    print("\nWorkspace root (optional but recommended):")
+    print("  ai-mem uses this to name collections by folder structure instead of git remotes.")
+    print("  Example: ~/workspace → ExoDeck-project/filming → repo.ExoDeck-project.filming")
+    print("  Leave blank to use git-based detection instead.")
+    raw = input("\nWorkspace root [default: skip]: ").strip()
+    if not raw:
+        return ""
+    expanded = str(Path(raw).expanduser().resolve())
+    if not Path(expanded).is_dir():
+        print(f"  ⚠ '{expanded}' does not exist — skipping workspace root.")
+        return ""
+    print(f"  ✓ Workspace root: {expanded}")
+    return expanded
+
+
+def register_claude(workspace_root: str = ""):
     """Add ai-mem MCP server + SessionStart hook to ~/.claude.json and ~/.claude/settings.json."""
     # MCP server → ~/.claude.json
     mcp_path = HOME / ".claude.json"
@@ -133,21 +170,35 @@ def register_claude():
     )
 
     def update_mcp(data: dict) -> dict:
-        data.setdefault("mcpServers", {})["ai-mem"] = {
+        entry: dict = {
             "type": "stdio",
             "command": python_exe(),
             "args": ["-m", SERVER_MODULE],
             "instructions": INSTRUCTIONS,
         }
+        if workspace_root:
+            entry["env"] = {"AI_MEM_WORKSPACE_ROOT": workspace_root}
+        else:
+            # Preserve an existing env block (e.g. AI_MEM_PATH), just don't add workspace root
+            existing_env = data.get("mcpServers", {}).get("ai-mem", {}).get("env", {})
+            if existing_env:
+                entry["env"] = existing_env
+        data.setdefault("mcpServers", {})["ai-mem"] = entry
         return data
 
     patch_json(mcp_path, update_mcp)
 
     # SessionStart + UserPromptSubmit + PreToolUse + PostToolUse hooks + permissions → ~/.claude/settings.json
     settings_path = HOME / ".claude" / "settings.json"
-    hook_cmd = f"{python_exe()} -m ai_mem.hook 2>/dev/null || true"
-    userprompt_cmd = f"{python_exe()} -m ai_mem.userprompt_hook 2>/dev/null || true"
-    posttool_cmd = f"{python_exe()} -m ai_mem.posttool_hook 2>/dev/null || true"
+    # Hooks run as separate subprocesses spawned by Claude Code directly — they do NOT inherit
+    # the "env" block set on the MCP server entry above (that only applies to the MCP server's own
+    # subprocess). So workspace_root must be threaded into the hook commands themselves, or hooks
+    # keep using git-based detection while mem_add/mem_query use workspace-root-based naming —
+    # the same failure mode already documented for AI_MEM_PATH in ai-mem's own memory.
+    env_prefix = f"AI_MEM_WORKSPACE_ROOT={workspace_root} " if workspace_root else ""
+    hook_cmd = f"{env_prefix}{python_exe()} -m ai_mem.hook 2>/dev/null || true"
+    userprompt_cmd = f"{env_prefix}{python_exe()} -m ai_mem.userprompt_hook 2>/dev/null || true"
+    posttool_cmd = f"{env_prefix}{python_exe()} -m ai_mem.posttool_hook 2>/dev/null || true"
 
     MCP_PERMISSIONS = [
         "mcp__ai-mem__mem_add",
@@ -165,28 +216,13 @@ def register_claude():
         hooks = data.setdefault("hooks", {})
 
         session_hooks = hooks.setdefault("SessionStart", [])
-        if not any(
-            h.get("command") == hook_cmd
-            for entry in session_hooks
-            for h in entry.get("hooks", [])
-        ):
-            session_hooks.append({"hooks": [{"type": "command", "command": hook_cmd, "timeout": 10}]})
+        _upsert_hook_command(session_hooks, "ai_mem.hook", hook_cmd, timeout=10)
 
         up_hooks = hooks.setdefault("UserPromptSubmit", [])
-        if not any(
-            h.get("command") == userprompt_cmd
-            for entry in up_hooks
-            for h in entry.get("hooks", [])
-        ):
-            up_hooks.append({"hooks": [{"type": "command", "command": userprompt_cmd, "timeout": 8}]})
+        _upsert_hook_command(up_hooks, "ai_mem.userprompt_hook", userprompt_cmd, timeout=8)
 
         pt_hooks = hooks.setdefault("PostToolUse", [])
-        if not any(
-            h.get("command") == posttool_cmd
-            for entry in pt_hooks
-            for h in entry.get("hooks", [])
-        ):
-            pt_hooks.append({"matcher": "Write|Edit", "hooks": [{"type": "command", "command": posttool_cmd, "timeout": 10}]})
+        _upsert_hook_command(pt_hooks, "ai_mem.posttool_hook", posttool_cmd, timeout=10, matcher="Write|Edit")
 
         allow = data.setdefault("permissions", {}).setdefault("allow", [])
         for perm in MCP_PERMISSIONS:
@@ -207,11 +243,19 @@ Initialize or update the ai-mem memory for the current project scope.
 
 1. Detect the active scope:
    - Find the nearest CLAUDE.md (or agent.md) walking up from the current directory
-   - From that directory run: `git rev-parse --show-toplevel`
+
+   If AI_MEM_WORKSPACE_ROOT is set (recommended):
+   - Compute the CLAUDE.md directory path relative to the workspace root
+   - Each path component becomes a dot-separated scope segment
+   - Sanitize each part: replace characters outside [a-zA-Z0-9._-] with underscore, strip leading/trailing ._-
+   - Collection name: `repo.<scope>` (e.g. `repo.ExoDeck-project.filming`)
+   - If CLAUDE.md is at the workspace root itself: falls back to `workspace`
+
+   If AI_MEM_WORKSPACE_ROOT is not set (git-based fallback):
+   - From the CLAUDE.md directory run: `git rev-parse --show-toplevel`
    - Try: `git remote get-url origin` and extract the trailing path component (strip .git suffix)
    - Fall back to the basename of the git root if no remote
    - If CLAUDE.md is not at the git root, append the relative subpath (dot-separated)
-   - Sanitize each part: replace characters outside [a-zA-Z0-9._-] with underscore, strip leading/trailing ._-
    - Collection name: `repo.<scope>` (e.g. `repo.ai-mem`, `repo.mymonorepo.backend`)
 
 2. Tell the user: "Initializing ai-mem for scope '<scope>' using collection 'repo.<scope>'."
@@ -382,10 +426,15 @@ def main():
     install_package()
     run_pending_migrations()
 
+    workspace_root = prompt_workspace_root()
+
     targets = prompt_targets()
     for label, register_fn in targets:
         try:
-            register_fn()
+            if register_fn is register_claude:
+                register_fn(workspace_root)
+            else:
+                register_fn()
         except Exception as e:
             print(f"   ✗ {label} registration failed: {e}")
 

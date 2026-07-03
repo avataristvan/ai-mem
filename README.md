@@ -114,6 +114,7 @@ mem_edges(entry_id="pattern_abc", collection="repo.my-project")
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AI_MEM_PATH` | `~/.local/share/ai-mem` | Database and ranker weights location |
+| `AI_MEM_WORKSPACE_ROOT` | unset (git-based detection) | Root directory used to name collections by folder structure instead of git remotes, e.g. `~/workspace` → `ExoDeck-project/filming` → `repo.ExoDeck-project.filming`. Set interactively during `install.py`, or manually in the `env` block of the `ai-mem` entry in `~/.claude.json`. |
 
 ### Custom agents (`~/.config/ai-mem/agents.yaml`)
 
