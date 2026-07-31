@@ -5,6 +5,7 @@ import json
 import re
 import subprocess
 from datetime import datetime
+from pathlib import Path
 
 from ai_mem.domain.memory import MemoryEntry, MemoryRepository
 
@@ -251,6 +252,62 @@ def _confidence_report(entries: list[MemoryEntry]) -> str:
     return "\n" + "\n".join(sections)
 
 
+def _pull_through_report(entries: list[MemoryEntry], log_path: Path) -> str:
+    """Return a markdown report of what fraction of pushed (userprompt_hook-injected) ids were
+    later deliberately used, per collection -- see arch_decision_push_vs_pull_2026_07_31, point 6.
+
+    "Deliberately used" means last_accessed_at (bumped only by mem_get, a positive mem_boost, or
+    a strong PostToolUse match -- see key_invariants in repo.ai-mem) moved past the push
+    timestamp. Entries deleted since their push, or never accessed at all, count as not pulled.
+    Returns an empty string if no push events are logged for any collection in `entries`.
+    """
+    from ai_mem.injection_log import load_events
+
+    by_key: dict[tuple[str, str], MemoryEntry] = {}
+    collections: set[str] = set()
+    for entry in entries:
+        col = entry.metadata.get("_collection")
+        if col:
+            by_key[(col, entry.id)] = entry
+            collections.add(col)
+
+    rows: list[tuple[str, int, int]] = []  # (collection, pulled, total)
+    for col in sorted(collections):
+        events = load_events(log_path, col)
+        if not events:
+            continue
+        pulled = 0
+        total = 0
+        for event in events:
+            entry = by_key.get((col, event.get("id")))
+            if entry is None:
+                continue  # deleted since the push -- unresolvable, excluded from both counts
+            total += 1
+            last_accessed = float(entry.metadata.get("last_accessed_at", 0) or 0)
+            if last_accessed > event.get("ts", 0):
+                pulled += 1
+        if total == 0:
+            continue
+        rows.append((col, pulled, total))
+
+    if not rows:
+        return ""
+
+    sections = [
+        "---",
+        "",
+        "## Pull-Through Report",
+        "",
+        "Of the ids userprompt_hook pushed into context, the fraction later deliberately used "
+        "(mem_get, positive mem_boost, or a strong PostToolUse match):",
+        "",
+    ]
+    for col, pulled, total in rows:
+        pct = 100.0 * pulled / total
+        sections.append(f"- `{col}`: {pulled}/{total} pushed ids later pulled ({pct:.1f}%)")
+    return "\n".join(sections)
+
+
 def _split_candidates(synthesis: str, all_entries: list[MemoryEntry]) -> str:
     """Return a formatted section listing SPLIT proposals from the synthesis, or empty string."""
     id_to_preview: dict[str, str] = {entry.id: entry.text[:60].replace("\n", " ") for entry in all_entries}
@@ -280,8 +337,9 @@ def _propagation_candidates(synthesis: str, source_collections: set[str]) -> lis
 
 
 class DreamMemoryUseCase:
-    def __init__(self, repo: MemoryRepository) -> None:
+    def __init__(self, repo: MemoryRepository, injection_log_path: Path | None = None) -> None:
         self._repo = repo
+        self._injection_log_path = injection_log_path
 
     def execute(
         self,
@@ -341,6 +399,11 @@ class DreamMemoryUseCase:
         conf_report = _confidence_report(all_entries)
         if conf_report:
             report += "\n\n" + conf_report
+
+        if self._injection_log_path is not None:
+            pull_report = _pull_through_report(all_entries, self._injection_log_path)
+            if pull_report:
+                report += "\n\n" + pull_report
 
         if auto_delete:
             deleted = self._auto_apply_deletes(synthesis, all_entries)

@@ -218,6 +218,14 @@ def main():
 
     lines: list[str] = []
     injected_ids: set[str] = set()
+    pushed_by_collection: dict[str, set[str]] = {}
+
+    def _mark_pushed(coll: str | None, entry_id: str | None) -> None:
+        if entry_id is None:
+            return
+        injected_ids.add(entry_id)
+        if coll is not None:
+            pushed_by_collection.setdefault(coll, set()).add(entry_id)
 
     if dilemma_results:
         lines.append("[ai-mem dilemmas]")
@@ -226,9 +234,7 @@ def main():
             if len(result.text) > MAX_CHARS_PER_DILEMMA:
                 text += "..."
             lines.append(f"⚖ {text}")
-            entry_id = getattr(result, "id", None)
-            if entry_id is not None:
-                injected_ids.add(entry_id)
+            _mark_pushed(repo_collection, getattr(result, "id", None))
 
     if antipattern_results:
         if lines:
@@ -241,9 +247,7 @@ def main():
             lines.append(f"⚠ {text}")
             if "Affected:" in result.text:
                 lines.append(ANTICIPATION_QUESTION)
-            entry_id = getattr(result, "id", None)
-            if entry_id is not None:
-                injected_ids.add(entry_id)
+            _mark_pushed(repo_collection, getattr(result, "id", None))
 
     if collected:
         if lines:
@@ -253,10 +257,17 @@ def main():
             score = f"{r.score:.2f}" if r.score is not None else "n/a"
             entry_id = getattr(r, "id", None)
             lines.append(f"- [{coll} score={score}] {entry_id}: {title_of(r.text)}")
-            if entry_id is not None:
-                injected_ids.add(entry_id)
+            _mark_pushed(coll, entry_id)
 
     _save_session_injected(DB_PATH, injected_ids)
+
+    try:
+        from ai_mem.injection_log import record_pushed
+        log_path = DB_PATH / "injection_log.json"
+        for coll, ids in pushed_by_collection.items():
+            record_pushed(log_path, coll, list(ids))
+    except Exception:
+        pass
 
     print(
         json.dumps(

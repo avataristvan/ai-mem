@@ -601,6 +601,47 @@ def test_relevant_hybrid_score_still_injects(tmp_path: Path) -> None:
     assert "ChromaDB cosine similarity scoring bug fix" in ctx
 
 
+# ---------------------------------------------------------------------------
+# 22. Pushed ids are logged per-collection for later pull-through measurement
+# ---------------------------------------------------------------------------
+
+def test_pushed_ids_logged_per_collection(tmp_path: Path) -> None:
+    from ai_mem.injection_log import load_events
+
+    global_results = [_make_result(0.9, "global memory", entry_id="g-1")]
+    repo_results = [_make_result(0.85, "repo memory", entry_id="r-1")]
+
+    _run_main(
+        tmp_path,
+        _stdin_json(),
+        global_results=global_results,
+        repo_results=repo_results,
+        repo_collection="repo.my-project",
+    )
+
+    log = tmp_path / "injection_log.json"
+    assert {e["id"] for e in load_events(log, "global")} == {"g-1"}
+    assert {e["id"] for e in load_events(log, "repo.my-project")} == {"r-1"}
+
+
+def test_antipattern_and_dilemma_ids_logged_under_repo_collection(tmp_path: Path) -> None:
+    from ai_mem.injection_log import load_events
+
+    ap = _make_result(0.85, "Tried: X\nFailed because: Y\nInstead: Z", entry_id="ap-1")
+    d = _make_result(0.75, "Tension: A vs. B\nQuestions: ?", entry_id="d-1")
+
+    _run_main(
+        tmp_path,
+        _stdin_json(),
+        antipattern_results=[ap],
+        dilemma_results=[d],
+        repo_collection="repo.my-project",
+    )
+
+    log = tmp_path / "injection_log.json"
+    assert {e["id"] for e in load_events(log, "repo.my-project")} == {"ap-1", "d-1"}
+
+
 def test_repo_lookup_skipped_when_not_has_claude_md(tmp_path: Path) -> None:
     global_results = [_make_result(0.9, "global memory")]
     repo_results = [_make_result(0.85, "repo memory")]

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 from ai_mem.application.dream_memory import (
     _ADD_TARGET_RE,
@@ -9,8 +10,10 @@ from ai_mem.application.dream_memory import (
     _confidence_report,
     _format_entries,
     _propagation_candidates,
+    _pull_through_report,
 )
 from ai_mem.domain.memory import MemoryEntry
+from ai_mem.injection_log import record_pushed
 
 
 def _entry(id: str, text: str, **meta) -> MemoryEntry:
@@ -261,3 +264,69 @@ class TestConfidenceReport:
         entries = [_entry("decay", "text", confidence=0.1, access_count=0, keep_in_ai_mem=True)]
         out = _confidence_report(entries)
         assert "Decay Candidates" in out
+
+
+# ── _pull_through_report ────────────────────────────────────────────────────────
+
+class TestPullThroughReport:
+    def test_empty_when_no_log_file(self, tmp_path):
+        entries = [_entry("e1", "text", collection="repo.x")]
+        assert _pull_through_report(entries, tmp_path / "injection_log.json") == ""
+
+    def test_empty_when_log_has_no_events_for_entries_collections(self, tmp_path):
+        log = tmp_path / "injection_log.json"
+        record_pushed(log, "other.collection", ["e1"])
+        entries = [_entry("e1", "text", collection="repo.x")]
+        assert _pull_through_report(entries, log) == ""
+
+    def test_pulled_when_last_accessed_after_push(self, tmp_path):
+        log = tmp_path / "injection_log.json"
+        record_pushed(log, "repo.x", ["e1"])
+        entries = [_entry("e1", "text", collection="repo.x", last_accessed_at=time.time() + 100)]
+
+        out = _pull_through_report(entries, log)
+        assert "`repo.x`: 1/1 pushed ids later pulled (100.0%)" in out
+
+    def test_not_pulled_when_never_accessed(self, tmp_path):
+        log = tmp_path / "injection_log.json"
+        record_pushed(log, "repo.x", ["e1"])
+        entries = [_entry("e1", "text", collection="repo.x")]
+
+        out = _pull_through_report(entries, log)
+        assert "`repo.x`: 0/1 pushed ids later pulled (0.0%)" in out
+
+    def test_not_pulled_when_last_accessed_before_push(self, tmp_path):
+        log = tmp_path / "injection_log.json"
+        record_pushed(log, "repo.x", ["e1"])
+        entries = [_entry("e1", "text", collection="repo.x", last_accessed_at=time.time() - 1000)]
+
+        out = _pull_through_report(entries, log)
+        assert "`repo.x`: 0/1 pushed ids later pulled (0.0%)" in out
+
+    def test_deleted_entry_not_counted_but_does_not_crash(self, tmp_path):
+        log = tmp_path / "injection_log.json"
+        record_pushed(log, "repo.x", ["gone"])
+        entries = [_entry("e1", "text", collection="repo.x")]
+
+        assert _pull_through_report(entries, log) == ""
+
+    def test_collections_reported_independently(self, tmp_path):
+        log = tmp_path / "injection_log.json"
+        record_pushed(log, "repo.x", ["e1"])
+        record_pushed(log, "global", ["g1"])
+        entries = [
+            _entry("e1", "text", collection="repo.x", last_accessed_at=time.time() + 100),
+            _entry("g1", "text", collection="global"),
+        ]
+
+        out = _pull_through_report(entries, log)
+        assert "`repo.x`: 1/1 pushed ids later pulled (100.0%)" in out
+        assert "`global`: 0/1 pushed ids later pulled (0.0%)" in out
+
+    def test_report_header_present(self, tmp_path):
+        log = tmp_path / "injection_log.json"
+        record_pushed(log, "repo.x", ["e1"])
+        entries = [_entry("e1", "text", collection="repo.x")]
+
+        out = _pull_through_report(entries, log)
+        assert "## Pull-Through Report" in out

@@ -75,7 +75,7 @@ def main() -> None:
 
     label = f"expert:{args.mode}" if args.expert else args.mode
     print(f"[dream:{label}] running...", file=sys.stderr)
-    use_case = DreamMemoryUseCase(repo)
+    use_case = DreamMemoryUseCase(repo, injection_log_path=_DB_PATH / "injection_log.json")
     try:
         result = use_case.execute(
             args.collection,
