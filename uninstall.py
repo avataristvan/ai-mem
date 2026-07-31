@@ -15,6 +15,26 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.resolve()
 HOME = Path.home()
 SERVER_MODULE = "ai_mem.server"
+DB_PATH = Path(
+    __import__("os").environ.get("AI_MEM_PATH", str(HOME / ".local" / "share" / "ai-mem"))
+)
+
+
+def stop_running_daemon(dry_run: bool) -> None:
+    """Stop the background query daemon (ai_mem/daemon.py) and remove its socket/pid files."""
+    print(f"\n  Background daemon ({DB_PATH})")
+    if dry_run:
+        print("    dry-run — skipping")
+        return
+    try:
+        from ai_mem.daemon import stop_daemon
+    except ImportError:
+        print("    package not importable — nothing to stop")
+        return
+    if stop_daemon(DB_PATH):
+        print("    stopped")
+    else:
+        print("    not running — nothing to remove")
 
 
 def python_exe() -> str:
@@ -205,6 +225,8 @@ def main() -> None:
             fn(args.dry_run)
         except Exception as e:
             print(f"  Error: {e}")
+
+    stop_running_daemon(args.dry_run)
 
     pip_answer = input("\nRemove the ai-mem Python package? [y/N] ").strip().lower()
     if pip_answer == "y":

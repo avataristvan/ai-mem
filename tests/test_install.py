@@ -1,6 +1,8 @@
 """Tests for install.py — _upsert_hook_command dedup logic."""
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import install
 
 
@@ -69,3 +71,19 @@ def test_remove_by_identity_not_value_equality():
     assert any(e is first_dup for e in entries)
     assert not any(e is second_dup for e in entries)
     assert len(entries) == 2
+
+
+# ---------------------------------------------------------------------------
+# stop_running_daemon
+# ---------------------------------------------------------------------------
+
+def test_stop_running_daemon_calls_stop_daemon_with_db_path():
+    with patch("ai_mem.daemon.stop_daemon", return_value=True) as stop_daemon:
+        install.stop_running_daemon()
+    stop_daemon.assert_called_once_with(install.DB_PATH)
+
+
+def test_stop_running_daemon_silent_when_package_not_yet_installed():
+    """A fresh machine has no ai_mem.daemon to import yet — must not raise."""
+    with patch.dict("sys.modules", {"ai_mem.daemon": None}):
+        install.stop_running_daemon()  # must not raise

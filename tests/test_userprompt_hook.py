@@ -155,6 +155,43 @@ def test_only_entries_above_threshold_injected(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 3b. [ai-mem available] format: id + title, not full text, with a mem_get hint
+# ---------------------------------------------------------------------------
+
+def test_available_block_shows_id_and_title_not_full_body(tmp_path: Path) -> None:
+    long_text = "First line is the title\nSecond line and beyond is the body, " + "x" * 300
+    results = [_make_result(0.9, long_text, entry_id="entry-42")]
+
+    out = _run_main(tmp_path, _stdin_json(), global_results=results)
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "[ai-mem available]" in ctx
+    assert "mem_get" in ctx
+    assert "entry-42" in ctx
+    assert "First line is the title" in ctx
+    assert "Second line and beyond is the body" not in ctx
+    assert "x" * 300 not in ctx
+
+
+def test_antipattern_and_dilemma_blocks_keep_full_text_not_title(tmp_path: Path) -> None:
+    """Scope decision: [ai-mem warnings]/[ai-mem dilemmas] stay full-text (action-triggered,
+    low-volume, meant to be read immediately without an extra mem_get round-trip) -- only the
+    generic [ai-mem available] context block was converted to id+title."""
+    ap_text = "Tried: doing X\nFailed because: Y broke\nInstead: do Z instead of X entirely"
+    d_text = "Tension: speed vs. correctness\nQuestions: is this reversible?"
+    ap = _make_result(0.85, ap_text, entry_id="ap-1")
+    d = _make_result(0.75, d_text, entry_id="d-1")
+
+    out = _run_main(tmp_path, _stdin_json(), antipattern_results=[ap], dilemma_results=[d])
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert ap_text in ctx
+    assert d_text in ctx
+
+
+# ---------------------------------------------------------------------------
 # 4. Missing DB path — exits silently
 # ---------------------------------------------------------------------------
 
@@ -241,16 +278,18 @@ def test_dedup_filters_already_injected_ids(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def test_budget_cap_stops_after_max_total_chars(tmp_path: Path) -> None:
-    # Each entry text is 400 chars; MAX_CHARS_PER_HIT=300, MAX_TOTAL_CHARS=1500
-    # → entry_len per hit = 300; 5 entries = 1500 chars (exactly at limit), 6th would exceed
-    long_text = "x" * 400
-    results = [_make_result(0.9 - i * 0.01, long_text, entry_id=f"id-{i}") for i in range(7)]
+    # title_of("x"*50) == "x"*50 (single line, under the 80-char title cap); each id is 4
+    # chars ("id-0".."id-6") -> entry_len = 50 + 4 = 54. MAX_TOTAL_CHARS is patched to fit
+    # exactly 5 entries (5 × 54 = 270); the 6th and 7th must be cut.
+    text = "x" * 50
+    results = [_make_result(0.9 - i * 0.01, text, entry_id=f"id-{i}") for i in range(7)]
 
-    out = _run_main(tmp_path, _stdin_json(), global_results=results)
+    with patch.object(hook, "MAX_TOTAL_CHARS", 270):
+        out = _run_main(tmp_path, _stdin_json(), global_results=results)
 
     parsed = json.loads(out)
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
-    # 5 entries fit exactly (5 × 300 = 1500), 6th and 7th are cut.
+    # 5 entries fit exactly, 6th and 7th are cut.
     assert ctx.count("- [global") == 5
 
 
@@ -319,7 +358,7 @@ def test_antipattern_block_precedes_context_block(tmp_path: Path) -> None:
 
     parsed = json.loads(out)
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
-    assert ctx.index("[ai-mem warnings]") < ctx.index("[ai-mem]")
+    assert ctx.index("[ai-mem warnings]") < ctx.index("[ai-mem available]")
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +459,7 @@ def test_dilemma_block_precedes_warnings_and_context(tmp_path: Path) -> None:
     parsed = json.loads(out)
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
     assert ctx.index("[ai-mem dilemmas]") < ctx.index("[ai-mem warnings]")
-    assert ctx.index("[ai-mem warnings]") < ctx.index("[ai-mem]")
+    assert ctx.index("[ai-mem warnings]") < ctx.index("[ai-mem available]")
 
 
 # ---------------------------------------------------------------------------

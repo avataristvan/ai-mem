@@ -87,6 +87,24 @@ def _upsert_hook_command(entries: list[dict], module: str, command: str, timeout
 def install_package():
     print("\n📦 Installing ai-mem package...")
     run([python_exe(), "-m", "pip", "install", "-e", str(REPO_ROOT), "--quiet"])
+    stop_running_daemon()
+
+
+def stop_running_daemon():
+    """Stop any already-running background query daemon.
+
+    The daemon (ai_mem/daemon.py) is a long-lived process hooks spawn lazily to stay warm
+    across hook invocations — it does not hot-reload when its source changes. Without this
+    step, a daemon started before this install/update keeps serving old code indefinitely;
+    hooks will lazily respawn a fresh one (picking up whatever was just installed) on their
+    next cache miss.
+    """
+    try:
+        from ai_mem.daemon import stop_daemon
+    except ImportError:
+        return  # nothing installed yet to have started a daemon in the first place
+    if stop_daemon(DB_PATH):
+        print("   ✓ Stopped running background daemon (will restart with updated code).")
 
 
 def prompt_workspace_root() -> str:

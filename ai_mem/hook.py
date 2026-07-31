@@ -14,6 +14,7 @@ try:
     from ai_mem.agent_context import detect_for_session_start, write_to_env_file
     from ai_mem.application.get_memory import GetMemoryUseCase
     from ai_mem.application.list_collections import ListCollectionsUseCase
+    from ai_mem.application.list_entries import title_of
     from ai_mem.infrastructure.chroma_repository import ChromaMemoryRepository
     from ai_mem.repo_context import GLOBAL_COLLECTION, WORKSPACE_COLLECTION, detect_repo_context
     from ai_mem.session_stats import record_injection
@@ -22,6 +23,7 @@ except ImportError:
     write_to_env_file = None  # type: ignore[assignment]
     GetMemoryUseCase = None  # type: ignore[assignment]
     ListCollectionsUseCase = None  # type: ignore[assignment]
+    title_of = None  # type: ignore[assignment]
     ChromaMemoryRepository = None  # type: ignore[assignment]
     GLOBAL_COLLECTION = "global"
     WORKSPACE_COLLECTION = "workspace"
@@ -39,7 +41,6 @@ _HIGH_CONFIDENCE_MIN_ACCESS = 3
 _HIGH_CONFIDENCE_MIN_BOOSTS = 1
 _HIGH_CONFIDENCE_MAX = 3
 _HIGH_CONFIDENCE_GLOBAL_MAX = 2
-_HIGH_CONFIDENCE_CHARS = 300
 _EXPIRED_MAX = 3
 _EXPIRED_PREVIEW_CHARS = 120
 
@@ -154,7 +155,7 @@ def main():
 
     if (detect_for_session_start is None or write_to_env_file is None
             or ChromaMemoryRepository is None or GetMemoryUseCase is None
-            or ListCollectionsUseCase is None
+            or ListCollectionsUseCase is None or title_of is None
             or detect_repo_context is None or record_injection is None):
         return
 
@@ -238,8 +239,9 @@ def main():
             _hc_entries = _high_confidence_entries(repo, ctx.collection, _hc_exclude)
             if _hc_entries:
                 parts.append(
-                    "[always-present]\n"
-                    + "\n".join(f"- {_truncate(entry.text, _HIGH_CONFIDENCE_CHARS)}" for entry in _hc_entries)
+                    "[available]\n"
+                    + "\n".join(f"- {entry.id}: {title_of(entry.text)}" for entry in _hc_entries)
+                    + f"\n(mem_get(ids=[...], collection=\"{ctx.collection}\") for full text)"
                 )
         # Unconditional: global applies everywhere, regardless of repo/CLAUDE.md context.
         # Separate, smaller cap so a full repo-scoped pool never crowds out global entries
@@ -247,8 +249,9 @@ def main():
         _hc_global_entries = _high_confidence_entries(repo, GLOBAL_COLLECTION, _hc_exclude, max_count=_HIGH_CONFIDENCE_GLOBAL_MAX)
         if _hc_global_entries:
             parts.append(
-                "[always-present: global]\n"
-                + "\n".join(f"- {_truncate(entry.text, _HIGH_CONFIDENCE_CHARS)}" for entry in _hc_global_entries)
+                "[available: global]\n"
+                + "\n".join(f"- {entry.id}: {title_of(entry.text)}" for entry in _hc_global_entries)
+                + '\n(mem_get(ids=[...], collection="global") for full text)'
             )
         _now_ts = time.time()
         _expired: list = []

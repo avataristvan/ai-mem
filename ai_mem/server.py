@@ -20,6 +20,7 @@ from ai_mem.application.get_edges import GetEdgesUseCase
 from ai_mem.application.get_memory import GetMemoryUseCase
 from ai_mem.application.list_collections import ListCollectionsUseCase
 from ai_mem.application.list_entries import ListEntriesUseCase
+from ai_mem.application.list_topics import ListTopicsUseCase
 from ai_mem.application.move_memory import MoveMemoryUseCase
 from ai_mem.application.query_memory import QueryMemoryUseCase
 from ai_mem.application.split_memory import SplitMemoryUseCase
@@ -43,6 +44,7 @@ _list = ListCollectionsUseCase(_repo)
 _delete = DeleteMemoryUseCase(_repo)
 _cleanup = CleanupMemoryUseCase(_repo)
 _list_entries = ListEntriesUseCase(_repo)
+_list_topics = ListTopicsUseCase(_repo)
 _detect_split_hints = DetectSplitHintsUseCase()
 _dream = DreamMemoryUseCase(_repo)
 _split = SplitMemoryUseCase(_repo, _add)
@@ -132,6 +134,22 @@ async def list_tools() -> list[types.Tool]:
                 "properties": {
                     "collection": {"type": "string", "description": "Collection to list entries for (omit to list all collections)"},
                 },
+            },
+        ),
+        types.Tool(
+            name="mem_topics",
+            description=(
+                "Browse a collection's entries grouped by type (pattern, anti-pattern, project, fact, "
+                "feedback, reference, dilemma, or 'untyped') — the rung between mem_list's flat {id, title} "
+                "dump and mem_get's full text. Use this instead of mem_list when a collection is large enough "
+                "that a flat list is unwieldy, or when you want to browse by category first."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "collection": {"type": "string", "description": f"Collection to group entries for (default: '{DEFAULT_COLLECTION}')"},
+                },
+                "required": [],
             },
         ),
         types.Tool(
@@ -457,6 +475,10 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             return [types.TextContent(type="text", text=json.dumps(entries, indent=2, ensure_ascii=False))]
         cols = _list.execute()
         return [types.TextContent(type="text", text=json.dumps([{"name": col_info.name, "count": col_info.count} for col_info in cols], indent=2))]
+
+    if name == "mem_topics":
+        topics = _list_topics.execute(collection)
+        return [types.TextContent(type="text", text=json.dumps(topics, indent=2, ensure_ascii=False))]
 
     if name == "mem_delete":
         affected = _delete.execute(collection=collection, ids=arguments.get("ids"))

@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import pytest
+from rank_bm25 import BM25Okapi
 
 from ai_mem.application.add_memory import AddMemoryUseCase
 from ai_mem.domain.memory import QueryResult
-from ai_mem.infrastructure.bm25_repository import BM25MemoryRepository
+from ai_mem.infrastructure.bm25_repository import _BM25_SATURATION_K, _saturate, BM25MemoryRepository
 
 pytest.importorskip("rank_bm25", reason="rank_bm25 not installed")
 
@@ -131,6 +132,68 @@ def test_weak_pool_cosine_not_rescaled_to_one():
     results = repo.query("weak", "fruit basket", n_results=3, max_age_days=None)
     assert results[0].id == "best"
     assert results[0].score == pytest.approx(0.1, abs=1e-4)
+
+
+def test_weak_pool_bm25_not_saturated_to_one():
+    """A weak best-in-pool raw BM25 score must not be saturated toward 1.0 just
+    because it's the strongest match in an even weaker pool — the BM25-side analog
+    of test_weak_pool_cosine_not_rescaled_to_one, and the regression the saturating
+    transform (raw / (raw + k)) fix targets. Pre-fix min-max normalization would
+    have pushed this to exactly 1.0 regardless of the raw score's magnitude."""
+    candidates = [
+        QueryResult(
+            rank=1,
+            id="best",
+            score=0.0,
+            text="a lonely fox wandered through the quiet meadow at dusk",
+            metadata={},
+        ),
+        QueryResult(
+            rank=2,
+            id="mid",
+            score=0.0,
+            text="the dog and the cat slept peacefully all afternoon",
+            metadata={},
+        ),
+        QueryResult(
+            rank=3,
+            id="worst",
+            score=0.0,
+            text="birds sang softly in the distant trees",
+            metadata={},
+        ),
+    ]
+    repo = BM25MemoryRepository(_FixedScoreRepo(candidates), alpha=0.0)
+    results = repo.query("weak", "fox", n_results=3, max_age_days=None)
+
+    corpus = [c.text.lower().split() for c in candidates]
+    raw_scores = BM25Okapi(corpus).get_scores(["fox"]).tolist()
+    top_raw = max(raw_scores)
+    expected = top_raw / (top_raw + _BM25_SATURATION_K)
+
+    assert results[0].id == "best"
+    assert results[0].score == pytest.approx(expected, abs=1e-4)
+    assert results[0].score < 0.5
+
+
+def test_saturate_clamps_negative_raw_scores():
+    """rank_bm25 can return negative raw scores (it floors negative IDFs at
+    0.25 * average_idf, which is itself negative for small/near-duplicate corpora).
+    raw / (raw + k) is only monotonic on one side of its pole at raw=-k and divides
+    by zero exactly there, so _saturate must clamp to 0 first — a non-positive raw
+    score means 'no real match' and should saturate to 0, not risk crossing the pole
+    and inverting rank order (a worse match ending up with a higher score than a
+    better one)."""
+    saturated = _saturate([-5.0, -_BM25_SATURATION_K, -0.5, 0.0, 3.0])
+    assert saturated == [
+        0.0,  # clamped, would otherwise be -5.0 / (-5.0 + 2.0) = 1.6666...
+        0.0,  # clamped, would otherwise divide by zero (raw == -k exactly)
+        0.0,  # clamped, would otherwise be -0.5 / (-0.5 + 2.0) = -0.3333...
+        0.0,
+        3.0 / (3.0 + _BM25_SATURATION_K),
+    ]
+    # monotonic non-decreasing across the whole clamped-then-saturated range
+    assert saturated == sorted(saturated)
 
 
 def test_strong_pool_fusion_ranking_preserved():

@@ -6,13 +6,20 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from ai_mem.application.list_entries import title_of
 from ai_mem.repo_context import GLOBAL_COLLECTION, detect_repo_context
 
 DB_PATH = Path(os.environ.get("AI_MEM_PATH", Path.home() / ".local" / "share" / "ai-mem"))
 _STATS_PATH = DB_PATH / "session_stats.json"
 TOP_K = 3
-MAX_CHARS_PER_HIT = 300
 MAX_TOTAL_CHARS = 1500
+# STALE as of 2026-07-31 (later same day): BM25's residual min-max flooring (described below)
+# was fixed by replacing it with a saturating transform (bm25_repository.py::_saturate) — the
+# measurements and thresholds below predate that fix and reflect the OLD distribution. The
+# thresholds have NOT yet been re-measured against the new fused-score distribution; do not
+# trust them as calibrated. See ai-mem entry bm25_saturating_transform_research_decision_2026_07_31
+# and CLAUDE.md's Critical Invariants for the pending recalibration follow-up.
+#
 # Thresholds recalibrated 2026-07-31 against the live ~/.local/share/ai-mem DB after the
 # Chunk 1/2 scoring fixes (real cosine similarity + non-double-normalized BM25 fusion), using
 # _build_query_uc(with_bm25=True) — the same hybrid path this hook uses. Measured top-hit
@@ -193,11 +200,13 @@ def main():
     antipattern_results = [result for result in antipattern_results if getattr(result, "id", None) not in already_injected]
     dilemma_results = [result for result in dilemma_results if getattr(result, "id", None) not in already_injected]
 
-    # Combined budget cap: include entries until MAX_TOTAL_CHARS is reached.
+    # Combined budget cap: include entries until MAX_TOTAL_CHARS is reached. Entries render as
+    # id + title (see the [ai-mem available] block below), not full text, so the budget is
+    # sized against what's actually displayed.
     budget_collected: list[tuple[str, Any]] = []
     chars_used = 0
     for coll, r in collected:
-        entry_len = min(len(r.text), MAX_CHARS_PER_HIT)
+        entry_len = len(title_of(r.text)) + len(getattr(r, "id", "") or "")
         if chars_used + entry_len > MAX_TOTAL_CHARS:
             break
         budget_collected.append((coll, r))
@@ -239,14 +248,11 @@ def main():
     if collected:
         if lines:
             lines.append("")
-        lines.append("[ai-mem] Relevant context for your prompt:")
+        lines.append("[ai-mem available] (mem_get(ids=[...], collection=<name>) for full text)")
         for coll, r in collected:
-            text = r.text[:MAX_CHARS_PER_HIT]
-            if len(r.text) > MAX_CHARS_PER_HIT:
-                text += "..."
             score = f"{r.score:.2f}" if r.score is not None else "n/a"
-            lines.append(f"- [{coll} score={score}] {text}")
             entry_id = getattr(r, "id", None)
+            lines.append(f"- [{coll} score={score}] {entry_id}: {title_of(r.text)}")
             if entry_id is not None:
                 injected_ids.add(entry_id)
 

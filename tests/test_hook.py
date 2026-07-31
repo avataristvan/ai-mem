@@ -84,8 +84,8 @@ def _run_main(
 
     high_confidence_entries_by_collection: same idea as expired_entries_by_collection,
     but for _high_confidence_entries -- lets tests isolate the ctx.collection
-    [always-present] call from the separate, unconditional GLOBAL_COLLECTION
-    [always-present: global] call. Takes precedence over the flat
+    [available] call from the separate, unconditional GLOBAL_COLLECTION
+    [available: global] call. Takes precedence over the flat
     `high_confidence_entries` when given.
     """
     if high_confidence_entries_by_collection is not None:
@@ -411,7 +411,7 @@ def test_workspace_focus_suppressed_when_no_claude_md_anywhere(tmp_path: Path) -
 
 
 # ---------------------------------------------------------------------------
-# 13. High-confidence proactive injection ([always-present] block)
+# 13. High-confidence proactive injection ([available] block)
 # ---------------------------------------------------------------------------
 
 def test_high_confidence_entries_appear_in_always_present_block(tmp_path: Path) -> None:
@@ -426,7 +426,7 @@ def test_high_confidence_entries_appear_in_always_present_block(tmp_path: Path) 
 
     parsed = json.loads(out)
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
-    assert "[always-present]" in ctx
+    assert "[available]" in ctx
     assert "Always push domain logic down" in ctx
 
 
@@ -440,7 +440,7 @@ def test_no_always_present_block_when_high_confidence_empty(tmp_path: Path) -> N
 
     parsed = json.loads(out)
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
-    assert "[always-present]" not in ctx
+    assert "[available]" not in ctx
 
 
 def test_always_present_block_skipped_for_workspace_collection(tmp_path: Path) -> None:
@@ -454,7 +454,7 @@ def test_always_present_block_skipped_for_workspace_collection(tmp_path: Path) -
 
     parsed = json.loads(out)
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
-    assert "[always-present]" not in ctx
+    assert "[available]" not in ctx
     assert "This should not appear." not in ctx
 
 
@@ -473,7 +473,7 @@ def test_always_present_block_shown_for_workspace_collection_with_claude_md(tmp_
 
     parsed = json.loads(out)
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
-    assert "[always-present]" in ctx
+    assert "[available]" in ctx
     assert "Root-level pattern that should surface." in ctx
 
 
@@ -647,9 +647,9 @@ def test_expired_block_shown_for_workspace_collection_with_claude_md(tmp_path: P
 
 
 def test_global_always_present_fires_even_without_claude_md(tmp_path: Path) -> None:
-    """GLOBAL_COLLECTION's [always-present: global] must be unconditional -- global
+    """GLOBAL_COLLECTION's [available: global] must be unconditional -- global
     applies everywhere, regardless of repo/CLAUDE.md context (unlike the repo-scoped
-    [always-present] block, which is correctly gated on has_claude_md)."""
+    [available] block, which is correctly gated on has_claude_md)."""
     entry = _make_mem_entry("pattern_global", "Universal rule that always applies.")
     out = _run_main(
         tmp_path,
@@ -661,9 +661,9 @@ def test_global_always_present_fires_even_without_claude_md(tmp_path: Path) -> N
 
     parsed = json.loads(out)
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
-    assert "[always-present: global]" in ctx
+    assert "[available: global]" in ctx
     assert "Universal rule that always applies." in ctx
-    assert "[always-present]" not in ctx.replace("[always-present: global]", "")
+    assert "[available]" not in ctx.replace("[available: global]", "")
 
 
 def test_global_and_repo_always_present_blocks_both_appear(tmp_path: Path) -> None:
@@ -681,8 +681,8 @@ def test_global_and_repo_always_present_blocks_both_appear(tmp_path: Path) -> No
 
     parsed = json.loads(out)
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
-    assert "[always-present]" in ctx
-    assert "[always-present: global]" in ctx
+    assert "[available]" in ctx
+    assert "[available: global]" in ctx
     assert "Repo-scoped rule." in ctx
     assert "Global rule." in ctx
 
@@ -705,8 +705,10 @@ def test_high_confidence_gate_respects_custom_max_count() -> None:
     assert hook._HIGH_CONFIDENCE_GLOBAL_MAX != hook._HIGH_CONFIDENCE_MAX
 
 
-def test_always_present_text_truncated_to_high_confidence_chars(tmp_path: Path) -> None:
-    long_text = "B" * 500  # well beyond _HIGH_CONFIDENCE_CHARS = 300
+def test_always_present_text_truncated_to_title_length(tmp_path: Path) -> None:
+    """[available] shows only id + title (title_of's 80-char cap) -- full text is never
+    dumped, and the id is present so mem_get(ids=[...]) can retrieve it on demand."""
+    long_text = "B" * 500
     entry = _make_mem_entry("pattern_long", long_text)
     out = _run_main(
         tmp_path,
@@ -718,6 +720,8 @@ def test_always_present_text_truncated_to_high_confidence_chars(tmp_path: Path) 
 
     parsed = json.loads(out)
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
-    assert "[always-present]" in ctx
+    assert "[available]" in ctx
     assert long_text not in ctx
-    assert "BBBB…" in ctx
+    assert "pattern_long" in ctx
+    assert "B" * 80 in ctx
+    assert "mem_get" in ctx

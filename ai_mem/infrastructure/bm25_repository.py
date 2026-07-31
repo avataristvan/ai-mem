@@ -6,23 +6,27 @@ from rank_bm25 import BM25Okapi
 from ai_mem.domain.memory import CollectionInfo, MemoryEdge, MemoryEntry, QueryResult
 
 _BM25_FETCH = 50
+# Empirically derived from the live-DB median nonzero raw BM25 score (~1.6), not a guess —
+# see ai-mem entry bm25_saturating_transform_research_decision_2026_07_31 for the full derivation.
+_BM25_SATURATION_K = 2.0
 
 
-def _normalize(scores: list[float]) -> list[float]:
-    lo, hi = min(scores), max(scores)
-    if hi == lo:
-        return [1.0] * len(scores)  # all equal → treat as maximally relevant (neutral position)
-    span = hi - lo
-    return [(score - lo) / span for score in scores]
+def _saturate(scores: list[float]) -> list[float]:
+    # rank_bm25 floors negative IDFs at 0.25 * average_idf, which is itself negative for
+    # small/near-duplicate corpora — so raw BM25 scores can be negative. raw/(raw+k) is only
+    # monotonic on one side of its pole at raw=-k (and divides by zero exactly there), so
+    # clamp to 0 first: a non-positive raw score means "no real match," which should saturate
+    # to 0 rather than risk crossing the pole and inverting rank order.
+    return [max(s, 0.0) / (max(s, 0.0) + _BM25_SATURATION_K) for s in scores]
 
 
 class BM25MemoryRepository:
     """Wraps any MemoryRepository, re-ranking results with BM25+cosine fusion.
 
     query() fetches _BM25_FETCH candidates from the inner repo, applies BM25
-    over those documents, min-max normalises only the BM25 scores (cosine is
-    already a meaningful absolute scale and is used as-is), and combines them
-    as: hybrid = alpha * cosine_raw + (1-alpha) * bm25_norm.
+    over those documents, and passes the raw BM25 scores through a saturating
+    transform (cosine is already a meaningful absolute scale and is used as-is),
+    combining them as: hybrid = alpha * cosine_raw + (1-alpha) * bm25_sat.
     """
 
     def __init__(self, inner, alpha: float = 0.5) -> None:
@@ -51,10 +55,13 @@ class BM25MemoryRepository:
 
         # cosine is already a fixed, meaningful similarity scale (post score-scaling fix in
         # chroma_repository.py) — min-max normalizing it here would throw that away and replace
-        # it with a purely rank-relative score again. Only BM25's raw score is corpus/query-length
-        # dependent and unbounded, so only it needs min-max rescaling to combine with cosine.
+        # it with a purely rank-relative score again. BM25's raw score is unbounded and
+        # corpus/query-length dependent, so it goes through a saturating transform
+        # (raw / (raw + k)) instead: an absolute, pool-independent mapping that depends only
+        # on the candidate's own raw score, not on what else is in the pool — same rationale
+        # as the cosine-side fix, just applied to BM25's half of the fusion.
         cosine_raw = [candidate.score for candidate in candidates]
-        bm25_norm = _normalize(bm25_raw)
+        bm25_norm = _saturate(bm25_raw)
 
         alpha = self._alpha
         fused = [

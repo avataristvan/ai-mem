@@ -13,11 +13,10 @@
 ```
 ChromaDB (fetch 50 candidates via cosine)
     └─► BM25Okapi (score same 50 documents)
-        └─► min-max normalise both score sets to [0, 1]
-            └─► fuse: hybrid = alpha × cosine_norm + (1-alpha) × bm25_norm
+        └─► cosine used as-is; BM25 raw scores pass through a saturating transform
+            └─► fuse: hybrid = alpha × cosine_raw + (1-alpha) × bm25_sat
                 └─► sort descending, truncate to n_results
                     └─► QueryResult.score = fused hybrid score
-                        └─► TorchMicroRanker re-ranks top-20 with learned features
 ```
 
 `_BM25_FETCH = 50` is the internal over-fetch count. The caller's `n_results` only controls the final truncation.
@@ -25,22 +24,23 @@ ChromaDB (fetch 50 candidates via cosine)
 ## Score Fusion Formula
 
 ```
-hybrid = alpha × cosine_norm + (1 - alpha) × bm25_norm
+hybrid = alpha × cosine_raw + (1 - alpha) × bm25_sat
 ```
 
-Both `cosine_norm` and `bm25_norm` are min-max normalised from the same 50-candidate pool before fusion.
+`cosine_raw` is used as-is — it's already an absolute, fixed-scale similarity (post score-scaling fix in `chroma_repository.py`), so no normalization is applied. `bm25_sat` is BM25's raw score passed through a saturating transform.
 
 ## Normalisation
 
+BM25's raw score is unbounded and corpus/query-length dependent, so it's mapped into `[0, 1)` with a saturating transform instead of a pool-relative min-max rescale. Raw scores are clamped to 0 first: `rank_bm25` can return negative scores (it floors negative IDFs at `0.25 * average_idf`, which is itself negative for small/near-duplicate corpora), and `raw/(raw+k)` is only monotonic on one side of its pole at `raw = -k` — clamping avoids crossing that pole and inverting rank order:
+
 ```python
-def _normalize(scores):
-    lo, hi = min(scores), max(scores)
-    if hi == lo:          # degenerate: all scores equal
-        return [1.0] * len(scores)
-    return [(s - lo) / (hi - lo) for s in scores]
+_BM25_SATURATION_K = 2.0
+
+def _saturate(scores):
+    return [max(s, 0.0) / (max(s, 0.0) + _BM25_SATURATION_K) for s in scores]
 ```
 
-Degenerate case (all scores identical) returns `1.0` for every candidate so no information is lost and the other signal determines final order.
+`k = 2.0` is empirically derived from the live-DB median nonzero raw BM25 score (~1.6), not a guess. Unlike min-max normalisation, this transform depends only on each candidate's own raw score, not on what else is in the fetched pool — so the best-in-pool candidate is no longer unconditionally mapped to `1.0` regardless of its absolute relevance.
 
 ## Alpha Configuration
 
@@ -62,9 +62,6 @@ repo = BM25MemoryRepository(inner_repo, alpha=0.3)
 ```bash
 # hybrid only
 pip install -e ".[hybrid]"
-
-# hybrid + ML re-ranker
-pip install -e ".[ml,hybrid]"
 
 # dev environment (includes rank_bm25)
 pip install -e ".[dev]"
