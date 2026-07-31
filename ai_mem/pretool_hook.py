@@ -5,15 +5,18 @@ import os
 import sys
 from pathlib import Path
 
+# Module-level imports for patchability in tests (same pattern as posttool_hook.py).
+from ai_mem.repo_context import GLOBAL_COLLECTION, detect_repo_context
+
 DB_PATH = Path(os.environ.get("AI_MEM_PATH", Path.home() / ".local" / "share" / "ai-mem"))
 TOP_K = 2
 MAX_CHARS_PER_HIT = 500
 
 
 def _build_query_use_case():
-    from ai_mem._hook_deps import _build_core, _make_query_uc
+    from ai_mem._hook_deps import _build_query_uc
 
-    return _make_query_uc(*_build_core(DB_PATH))
+    return _build_query_uc(DB_PATH, with_bm25=False)
 
 
 def _hits(query_uc, collection: str, query: str):
@@ -44,8 +47,6 @@ def main():
         return
 
     try:
-        from ai_mem.repo_context import GLOBAL_COLLECTION, detect_repo_context
-
         query_uc = _build_query_use_case()
     except Exception:
         return
