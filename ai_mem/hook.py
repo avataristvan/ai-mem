@@ -38,6 +38,7 @@ _HIGH_CONFIDENCE_THRESHOLD = 0.9
 _HIGH_CONFIDENCE_MIN_ACCESS = 3
 _HIGH_CONFIDENCE_MIN_BOOSTS = 1
 _HIGH_CONFIDENCE_MAX = 3
+_HIGH_CONFIDENCE_GLOBAL_MAX = 2
 _HIGH_CONFIDENCE_CHARS = 300
 _EXPIRED_MAX = 3
 _EXPIRED_PREVIEW_CHARS = 120
@@ -102,7 +103,7 @@ def _focus_text(get_memory, collection: str) -> str | None:
         return None
 
 
-def _high_confidence_entries(repo, collection: str, exclude_ids: set[str]) -> list:
+def _high_confidence_entries(repo, collection: str, exclude_ids: set[str], max_count: int = _HIGH_CONFIDENCE_MAX) -> list:
     """Return entries with confidence > threshold and enough access history, sorted by confidence desc."""
     try:
         all_entries = repo.get_all(collection)
@@ -119,7 +120,7 @@ def _high_confidence_entries(repo, collection: str, exclude_ids: set[str]) -> li
             if conf > _HIGH_CONFIDENCE_THRESHOLD and access_count >= _HIGH_CONFIDENCE_MIN_ACCESS and boost_count >= _HIGH_CONFIDENCE_MIN_BOOSTS:
                 candidates.append((conf, entry))
         candidates.sort(key=lambda x: x[0], reverse=True)
-        return [entry for _, entry in candidates[:_HIGH_CONFIDENCE_MAX]]
+        return [entry for _, entry in candidates[:max_count]]
     except Exception:
         return []
 
@@ -232,14 +233,23 @@ def main():
                 f'Expert collection: "subagent.{agent_type}". '
                 f'Store cross-project learnings there with collection="subagent.{agent_type}".'
             )
+        _hc_exclude = {FOCUS_ID}
         if ctx.has_claude_md:
-            _hc_exclude = {FOCUS_ID}
             _hc_entries = _high_confidence_entries(repo, ctx.collection, _hc_exclude)
             if _hc_entries:
                 parts.append(
                     "[always-present]\n"
                     + "\n".join(f"- {_truncate(entry.text, _HIGH_CONFIDENCE_CHARS)}" for entry in _hc_entries)
                 )
+        # Unconditional: global applies everywhere, regardless of repo/CLAUDE.md context.
+        # Separate, smaller cap so a full repo-scoped pool never crowds out global entries
+        # (or vice versa) -- same fixed-cap-not-dump discipline as every other injection point.
+        _hc_global_entries = _high_confidence_entries(repo, GLOBAL_COLLECTION, _hc_exclude, max_count=_HIGH_CONFIDENCE_GLOBAL_MAX)
+        if _hc_global_entries:
+            parts.append(
+                "[always-present: global]\n"
+                + "\n".join(f"- {_truncate(entry.text, _HIGH_CONFIDENCE_CHARS)}" for entry in _hc_global_entries)
+            )
         _now_ts = time.time()
         _expired: list = []
         if ctx.has_claude_md:

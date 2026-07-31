@@ -61,6 +61,7 @@ def _run_main(
     git_commits: list[str] | None = None,
     expert_query_results: list | None = None,
     high_confidence_entries: list | None = None,
+    high_confidence_entries_by_collection: dict[str, list] | None = None,
     expired_entries: list | None = None,
     expired_entries_by_collection: dict[str, list] | None = None,
     has_claude_md: bool = False,
@@ -80,7 +81,20 @@ def _run_main(
     _expired_entries for that specific collection, so tests can tell apart the
     ctx.collection call from the unconditional GLOBAL_COLLECTION call. Takes
     precedence over the flat `expired_entries` when given.
+
+    high_confidence_entries_by_collection: same idea as expired_entries_by_collection,
+    but for _high_confidence_entries -- lets tests isolate the ctx.collection
+    [always-present] call from the separate, unconditional GLOBAL_COLLECTION
+    [always-present: global] call. Takes precedence over the flat
+    `high_confidence_entries` when given.
     """
+    if high_confidence_entries_by_collection is not None:
+        def fake_high_confidence_entries(repo, collection: str, exclude_ids: set, max_count: int = 0) -> list:
+            return high_confidence_entries_by_collection.get(collection, [])
+    else:
+        def fake_high_confidence_entries(repo, collection: str, exclude_ids: set, max_count: int = 0) -> list:
+            return high_confidence_entries or []
+
     if expired_entries_by_collection is not None:
         def fake_expired_entries(repo, collection: str, now_ts: float) -> list:
             return expired_entries_by_collection.get(collection, [])
@@ -120,7 +134,7 @@ def _run_main(
         patch.object(hook, "GLOBAL_COLLECTION", "global"),
         patch.object(hook, "WORKSPACE_COLLECTION", "workspace"),
         patch.object(hook, "ListCollectionsUseCase", mock_list_uc),
-        patch.object(hook, "_high_confidence_entries", return_value=high_confidence_entries or []),
+        patch.object(hook, "_high_confidence_entries", side_effect=fake_high_confidence_entries),
         patch.object(hook, "_expired_entries", side_effect=fake_expired_entries),
     ):
         tmp_path.mkdir(parents=True, exist_ok=True)
@@ -435,12 +449,13 @@ def test_always_present_block_skipped_for_workspace_collection(tmp_path: Path) -
         tmp_path,
         focus_map={"global": "global mem"},
         repo_collection="workspace",
-        high_confidence_entries=[entry],
+        high_confidence_entries_by_collection={"workspace": [entry], "global": []},
     )
 
     parsed = json.loads(out)
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
     assert "[always-present]" not in ctx
+    assert "This should not appear." not in ctx
 
 
 def test_always_present_block_shown_for_workspace_collection_with_claude_md(tmp_path: Path) -> None:
@@ -629,6 +644,65 @@ def test_expired_block_shown_for_workspace_collection_with_claude_md(tmp_path: P
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
     assert "[ai-mem expired]" in ctx
     assert "todo_root" in ctx
+
+
+def test_global_always_present_fires_even_without_claude_md(tmp_path: Path) -> None:
+    """GLOBAL_COLLECTION's [always-present: global] must be unconditional -- global
+    applies everywhere, regardless of repo/CLAUDE.md context (unlike the repo-scoped
+    [always-present] block, which is correctly gated on has_claude_md)."""
+    entry = _make_mem_entry("pattern_global", "Universal rule that always applies.")
+    out = _run_main(
+        tmp_path,
+        focus_map={"global": "global mem"},
+        repo_collection="workspace",
+        has_claude_md=False,
+        high_confidence_entries_by_collection={"workspace": [], "global": [entry]},
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "[always-present: global]" in ctx
+    assert "Universal rule that always applies." in ctx
+    assert "[always-present]" not in ctx.replace("[always-present: global]", "")
+
+
+def test_global_and_repo_always_present_blocks_both_appear(tmp_path: Path) -> None:
+    """The two blocks are independent -- a full repo-scoped pool must not crowd out
+    global entries, and vice versa."""
+    repo_entry = _make_mem_entry("pattern_repo", "Repo-scoped rule.")
+    global_entry = _make_mem_entry("pattern_global", "Global rule.")
+    out = _run_main(
+        tmp_path,
+        focus_map={"global": "global mem"},
+        repo_collection="repo.ai-mem",
+        has_claude_md=True,
+        high_confidence_entries_by_collection={"repo.ai-mem": [repo_entry], "global": [global_entry]},
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "[always-present]" in ctx
+    assert "[always-present: global]" in ctx
+    assert "Repo-scoped rule." in ctx
+    assert "Global rule." in ctx
+
+
+def test_high_confidence_gate_respects_custom_max_count() -> None:
+    """max_count parameterizes the cap independently of _HIGH_CONFIDENCE_MAX -- this is
+    what lets the global block use a smaller, separate cap (_HIGH_CONFIDENCE_GLOBAL_MAX)
+    than the repo-scoped block, without sharing a budget."""
+    mock_repo = MagicMock()
+    entries = [
+        _make_mem_entry(f"pattern_{i}", f"Entry {i}", confidence=0.95, access_count=5, boost_count=1)
+        for i in range(5)
+    ]
+    mock_repo.get_all.return_value = entries
+
+    result = hook._high_confidence_entries(mock_repo, "global", exclude_ids=set(), max_count=2)
+
+    assert len(result) == 2
+    assert hook._HIGH_CONFIDENCE_GLOBAL_MAX == 2
+    assert hook._HIGH_CONFIDENCE_GLOBAL_MAX != hook._HIGH_CONFIDENCE_MAX
 
 
 def test_always_present_text_truncated_to_high_confidence_chars(tmp_path: Path) -> None:
