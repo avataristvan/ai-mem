@@ -530,6 +530,38 @@ def test_repo_lookup_fires_when_workspace_collection_has_claude_md(tmp_path: Pat
     assert "repo memory" in ctx_text
 
 
+# ---------------------------------------------------------------------------
+# 21. Regression: off-topic hybrid scores in the 0.45-0.60 band (measured
+# irrelevant-query ceiling against the live DB, pre-fix threshold was 0.3)
+# must not inject. This is the exact failure mode the CONTEXT_MIN_SCORE
+# recalibration exists to close.
+# ---------------------------------------------------------------------------
+
+def test_irrelevant_hybrid_scores_do_not_inject(tmp_path: Path) -> None:
+    """Scores in this band were observed for genuinely off-topic prompts
+    (e.g. "what is the weather in Paris today?") against the real DB after
+    the Chunk 1/2 scoring fixes — the old CONTEXT_MIN_SCORE=0.3 would have
+    let all of these through."""
+    noise_scores = [0.4795, 0.5659, 0.6023]
+    results = [_make_result(score, f"unrelated memory {score}") for score in noise_scores]
+
+    out = _run_main(tmp_path, _stdin_json(), global_results=results, repo_results=results)
+
+    assert out == ""
+
+
+def test_relevant_hybrid_score_still_injects(tmp_path: Path) -> None:
+    """A genuinely relevant hit (measured ~0.71-0.78 floor in repo.ai-mem
+    against real matching entries) must still clear the new threshold."""
+    results = [_make_result(0.7653, "ChromaDB cosine similarity scoring bug fix")]
+
+    out = _run_main(tmp_path, _stdin_json(), global_results=results)
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "ChromaDB cosine similarity scoring bug fix" in ctx
+
+
 def test_repo_lookup_skipped_when_not_has_claude_md(tmp_path: Path) -> None:
     global_results = [_make_result(0.9, "global memory")]
     repo_results = [_make_result(0.85, "repo memory")]

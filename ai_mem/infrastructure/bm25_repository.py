@@ -20,8 +20,9 @@ class BM25MemoryRepository:
     """Wraps any MemoryRepository, re-ranking results with BM25+cosine fusion.
 
     query() fetches _BM25_FETCH candidates from the inner repo, applies BM25
-    over those documents, normalises both score sets to [0,1], and combines
-    them as: hybrid = alpha * cosine_norm + (1-alpha) * bm25_norm.
+    over those documents, min-max normalises only the BM25 scores (cosine is
+    already a meaningful absolute scale and is used as-is), and combines them
+    as: hybrid = alpha * cosine_raw + (1-alpha) * bm25_norm.
     """
 
     def __init__(self, inner, alpha: float = 0.5) -> None:
@@ -48,15 +49,17 @@ class BM25MemoryRepository:
         except ZeroDivisionError:
             bm25_raw = [0.0] * len(candidates)
 
+        # cosine is already a fixed, meaningful similarity scale (post score-scaling fix in
+        # chroma_repository.py) — min-max normalizing it here would throw that away and replace
+        # it with a purely rank-relative score again. Only BM25's raw score is corpus/query-length
+        # dependent and unbounded, so only it needs min-max rescaling to combine with cosine.
         cosine_raw = [candidate.score for candidate in candidates]
-
-        cosine_norm = _normalize(cosine_raw)
         bm25_norm = _normalize(bm25_raw)
 
         alpha = self._alpha
         fused = [
             alpha * cosine_val + (1 - alpha) * bm25_val
-            for cosine_val, bm25_val in zip(cosine_norm, bm25_norm)
+            for cosine_val, bm25_val in zip(cosine_raw, bm25_norm)
         ]
 
         ranked = sorted(

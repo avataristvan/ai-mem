@@ -13,15 +13,40 @@ _STATS_PATH = DB_PATH / "session_stats.json"
 TOP_K = 3
 MAX_CHARS_PER_HIT = 300
 MAX_TOTAL_CHARS = 1500
-CONTEXT_MIN_SCORE = 0.3
+# Thresholds recalibrated 2026-07-31 against the live ~/.local/share/ai-mem DB after the
+# Chunk 1/2 scoring fixes (real cosine similarity + non-double-normalized BM25 fusion), using
+# _build_query_uc(with_bm25=True) — the same hybrid path this hook uses. Measured top-hit
+# scores, unfiltered CONTEXT query:
+#   - Clearly irrelevant prompts ("weather in Paris", "pizza dough hydration", "quantum
+#     entanglement", ...) against `global` and `repo.ai-mem`: ceiling ~0.60 (worst case 0.6023).
+#     This ceiling is not noise-free: BM25's min-max normalization still gives the best-in-pool
+#     candidate a bm25_norm of 1.0 regardless of absolute relevance, so alpha*cosine + (1-alpha)*1.0
+#     puts a floor under even off-topic top hits.
+#   - Verifiably relevant prompts (matching real entries like the ChromaDB scoring fix, BM25
+#     fusion fix, confidence lifecycle, hook system docs) against the same collections: floor
+#     ~0.58 in the noisier multi-project `global` collection, ~0.71 in the more homogeneous
+#     `repo.ai-mem` collection.
+# CONTEXT_MIN_SCORE is set just above the measured irrelevant ceiling (0.62), accepting that a
+# few marginal true positives in `global` (0.58-0.62) are filtered out — the session that
+# produced this recalibration found the old threshold (0.3, tuned for min-max-normalized scores
+# that always inflated the top hit toward 1.0) injected near-unconditionally, so precision is
+# prioritized over recall here.
+CONTEXT_MIN_SCORE = 0.62
 MIN_QUERY_CHARS = 15
 SESSION_TTL_HOURS = 4
 ANTIPATTERN_TOP_K = 2
 MAX_CHARS_PER_ANTIPATTERN = 200
-ANTIPATTERN_MIN_SCORE = 0.4
+# Anti-pattern/dilemma queries use a type_filter, so the BM25 candidate pool is much smaller
+# (11 anti-pattern entries in `global`, 2 in `repo.ai-mem` at measurement time; 0 dilemma entries
+# exist anywhere, so DILEMMA_MIN_SCORE is set by structural analogy rather than direct
+# measurement). Measured irrelevant top-hit ceiling for anti-pattern queries: ~0.555 (0.5537
+# global, 0.5553 repo.ai-mem). Measured relevant floor: ~0.60 (global) / ~0.75 (repo.ai-mem).
+# Set just above the measured irrelevant ceiling (0.58) to keep the real match through while
+# rejecting the noise ceiling.
+ANTIPATTERN_MIN_SCORE = 0.58
 DILEMMA_TOP_K = 2
 MAX_CHARS_PER_DILEMMA = 250
-DILEMMA_MIN_SCORE = 0.4
+DILEMMA_MIN_SCORE = 0.58
 ANTICIPATION_QUESTION = "  → Anticipation: Who holds the same role now? What would happen to them?"
 
 

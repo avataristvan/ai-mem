@@ -4,9 +4,21 @@ from __future__ import annotations
 import pytest
 
 from ai_mem.application.add_memory import AddMemoryUseCase
+from ai_mem.domain.memory import QueryResult
 from ai_mem.infrastructure.bm25_repository import BM25MemoryRepository
 
 pytest.importorskip("rank_bm25", reason="rank_bm25 not installed")
+
+
+class _FixedScoreRepo:
+    """Fake inner repo returning pre-set candidates with controlled cosine scores,
+    so fusion behavior can be tested independent of actual embedding values."""
+
+    def __init__(self, candidates: list[QueryResult]) -> None:
+        self._candidates = candidates
+
+    def query(self, collection, text, n_results, max_age_days, type_filter=None):
+        return self._candidates
 
 
 @pytest.fixture
@@ -63,7 +75,10 @@ def test_scores_in_range(bm25_repo):
     )
     results = bm25_repo.query("range", "AI agent memory", n_results=3, max_age_days=None)
     for r in results:
-        assert 0.0 <= r.score <= 1.0
+        # cosine is no longer min-max normalized (post-fix), so it can be slightly
+        # negative for dissimilar embeddings; bm25_norm stays in [0,1]. Fused range
+        # is therefore [-1, 1] with the current alpha, not the old tight [0, 1].
+        assert -1.0 <= r.score <= 1.0
 
 
 def test_respects_n_results(bm25_repo):
@@ -100,3 +115,47 @@ def test_single_entry(bm25_repo):
     assert len(results) == 1
     assert results[0].id == "only"
     assert 0.0 <= results[0].score <= 1.0
+
+
+def test_weak_pool_cosine_not_rescaled_to_one():
+    """A candidate with a real cosine score of 0.1 (weak) must not be rescaled to
+    1.0 just because it's the best-ranked of an even weaker pool (0.05, 0.02).
+    With alpha=1.0 (pure cosine, no BM25 contribution) the fused score must equal
+    the raw cosine value exactly — proving cosine is no longer min-max normalized."""
+    candidates = [
+        QueryResult(rank=1, id="best", score=0.1, text="apple fruit basket", metadata={}),
+        QueryResult(rank=2, id="mid", score=0.05, text="banana fruit basket", metadata={}),
+        QueryResult(rank=3, id="worst", score=0.02, text="cherry fruit basket", metadata={}),
+    ]
+    repo = BM25MemoryRepository(_FixedScoreRepo(candidates), alpha=1.0)
+    results = repo.query("weak", "fruit basket", n_results=3, max_age_days=None)
+    assert results[0].id == "best"
+    assert results[0].score == pytest.approx(0.1, abs=1e-4)
+
+
+def test_strong_pool_fusion_ranking_preserved():
+    """A candidate with a genuinely strong cosine score, reinforced by exact BM25
+    term matches, must still rank above a weak, unrelated candidate — proving the
+    fusion formula still combines both signals sensibly."""
+    candidates = [
+        QueryResult(
+            rank=1,
+            id="strong",
+            score=0.9,
+            text="TorchMicroRanker neural network model",
+            metadata={},
+        ),
+        QueryResult(
+            rank=2,
+            id="weak",
+            score=0.1,
+            text="completely unrelated database text",
+            metadata={},
+        ),
+    ]
+    repo = BM25MemoryRepository(_FixedScoreRepo(candidates), alpha=0.5)
+    results = repo.query(
+        "strong", "TorchMicroRanker neural network", n_results=2, max_age_days=None
+    )
+    assert results[0].id == "strong"
+    assert results[0].score > results[1].score

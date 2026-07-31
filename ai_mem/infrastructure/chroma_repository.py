@@ -92,7 +92,9 @@ class ChromaMemoryRepository:
             QueryResult(
                 rank=idx + 1,
                 id=id_,
-                score=round(1.0 - dist, 4),
+                # get_or_create_collection defaults to `l2` (squared L2) space, not cosine.
+                # For normalized embeddings, dist = 2 - 2*cos_sim, so cos_sim = 1 - dist/2.
+                score=round(1.0 - dist / 2.0, 4),
                 text=doc,
                 metadata=meta or {},
             )
