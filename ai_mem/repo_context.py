@@ -68,7 +68,13 @@ def detect_repo_context(cwd: Path | None = None) -> RepoContext:
 
         git_root_str = _run(["git", "rev-parse", "--show-toplevel"], cwd=claude_md_dir)
         if git_root_str is None:
-            return RepoContext(None, WORKSPACE_COLLECTION, True, claude_md_dir, None)
+            # CLAUDE.md exists but this isn't a git repo yet (e.g. a freshly
+            # created project dir) — scope by its own directory name instead
+            # of dumping into the shared workspace collection, same fallback
+            # git repos without a remote already get below.
+            scope_name = _sanitize(claude_md_dir.name)
+            collection = f"repo.{scope_name}" if scope_name else WORKSPACE_COLLECTION
+            return RepoContext(scope_name or None, collection, True, claude_md_dir, None)
 
         git_root = Path(git_root_str)
 

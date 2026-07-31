@@ -252,3 +252,12 @@ class TestConfidenceReport:
         entries = [_entry("promo", "text", confidence=0.95, access_count=5)]
         out = _confidence_report(entries)
         assert "type=" not in out
+
+    def test_keep_in_ai_mem_suppresses_promotion(self):
+        entries = [_entry("promo", "text", confidence=0.95, access_count=5, keep_in_ai_mem=True)]
+        assert _confidence_report(entries) == ""
+
+    def test_keep_in_ai_mem_does_not_suppress_decay(self):
+        entries = [_entry("decay", "text", confidence=0.1, access_count=0, keep_in_ai_mem=True)]
+        out = _confidence_report(entries)
+        assert "Decay Candidates" in out

@@ -121,8 +121,12 @@ class TestDetectWorkspaceRoot:
         monkeypatch.setenv("AI_MEM_WORKSPACE_ROOT", str(workspace))
 
         ctx = detect_repo_context(outside)
-        # No git root either → workspace collection
-        assert ctx.collection == WORKSPACE_COLLECTION
+        # No git root either → scoped by its own directory name, not the
+        # shared workspace collection (avoids polluting/being polluted by
+        # unrelated projects that also lack a repo-scoped collection).
+        assert ctx.collection == "repo.other-project"
+        assert ctx.scope_name == "other-project"
+        assert ctx.has_claude_md is True
 
 
 # ---------------------------------------------------------------------------

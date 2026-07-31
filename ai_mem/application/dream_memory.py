@@ -217,7 +217,7 @@ def _confidence_report(entries: list[MemoryEntry]) -> str:
 
         if conf < 0.3:
             decay.append((entry.id, col, conf, access_count))
-        if conf > 0.9 and access_count >= 3:
+        if conf > 0.9 and access_count >= 3 and not entry.metadata.get("keep_in_ai_mem"):
             promote.append((entry.id, col, conf, access_count, entry_type))
 
     if not decay and not promote:
