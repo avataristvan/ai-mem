@@ -44,7 +44,7 @@ def main():
         return
 
     try:
-        from ai_mem.repo_context import GLOBAL_COLLECTION, WORKSPACE_COLLECTION, detect_repo_context
+        from ai_mem.repo_context import GLOBAL_COLLECTION, detect_repo_context
 
         query_uc = _build_query_use_case()
     except Exception:
@@ -58,7 +58,7 @@ def main():
 
     try:
         ctx = detect_repo_context()
-        if ctx.collection not in (GLOBAL_COLLECTION, WORKSPACE_COLLECTION):
+        if ctx.has_claude_md:
             collected.extend((ctx.collection, result) for result in _hits(query_uc, ctx.collection, query))
     except Exception:
         pass

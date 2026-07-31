@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 from ai_mem.agent_context import _CONFIG_PATH, _load_settings
-from ai_mem.repo_context import GLOBAL_COLLECTION, WORKSPACE_COLLECTION, detect_repo_context
+from ai_mem.repo_context import GLOBAL_COLLECTION, detect_repo_context
 
 DB_PATH = Path(os.environ.get("AI_MEM_PATH", Path.home() / ".local" / "share" / "ai-mem"))
 _QUERY_K = 5  # enough candidates to surface relevant entries; no injection needed
@@ -72,7 +72,7 @@ def main():
 
     try:
         ctx = detect_repo_context()
-        if ctx.collection not in (GLOBAL_COLLECTION, WORKSPACE_COLLECTION):
+        if ctx.has_claude_md:
             _signal_collection(query_uc, ctx.collection, query, min_label_score, query_k)
     except Exception:
         pass

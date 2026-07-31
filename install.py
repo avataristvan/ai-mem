@@ -41,14 +41,41 @@ def _upsert_hook_command(entries: list[dict], module: str, command: str, timeout
     Matches by module name (`-m <module>`) rather than exact command string, so re-running
     install.py with a different env prefix (e.g. AI_MEM_WORKSPACE_ROOT changing) updates the
     existing entry in place instead of appending a duplicate that fires alongside the old one.
+
+    Self-healing: if more than one hook entry already matches `module` (e.g. left over from
+    installs predating this dedup logic, or from install.py having been invoked once via
+    `python` and once via `python3`), the extras are removed here too — every install run
+    sanitizes the file down to exactly one entry per module instead of only preventing new
+    duplicates from being added. Removal is surgical: only the matching hook object is
+    stripped out of a group's `hooks` list, and the group itself is dropped only if that
+    leaves it empty — a user-customized group that bundles an unrelated hook alongside an
+    old ai-mem duplicate keeps its unrelated hook intact.
     """
     marker = f"-m {module} "
-    for entry in entries:
-        for h in entry.get("hooks", []):
-            if marker in h.get("command", ""):
-                h["command"] = command
-                h["timeout"] = timeout
-                return
+    kept: dict | None = None
+    for entry in list(entries):
+        hooks_list = entry.get("hooks", [])
+        matching = [h for h in hooks_list if marker in h.get("command", "")]
+        if not matching:
+            continue
+        if kept is None:
+            kept = matching[0]
+            # drop any further duplicates that happen to sit in this same group too
+            entry["hooks"] = [h for h in hooks_list if h is kept or marker not in h.get("command", "")]
+            # only claim the matcher if the group is exclusively ours now — a group that
+            # still holds an unrelated user hook keeps its own matcher untouched
+            if matcher is not None and len(entry["hooks"]) == 1:
+                entry["matcher"] = matcher
+        else:
+            entry["hooks"] = [h for h in hooks_list if marker not in h.get("command", "")]
+            if not entry["hooks"]:
+                # remove by identity, not value-equality — two unrelated emptied/empty
+                # groups can be dict-equal and list.remove would drop the wrong one
+                entries[:] = [e for e in entries if e is not entry]
+    if kept is not None:
+        kept["command"] = command
+        kept["timeout"] = timeout
+        return
     new_entry = {"hooks": [{"type": "command", "command": command, "timeout": timeout}]}
     if matcher is not None:
         new_entry["matcher"] = matcher
@@ -198,6 +225,7 @@ def register_claude(workspace_root: str = ""):
     env_prefix = f"AI_MEM_WORKSPACE_ROOT={workspace_root} " if workspace_root else ""
     hook_cmd = f"{env_prefix}{python_exe()} -m ai_mem.hook 2>/dev/null || true"
     userprompt_cmd = f"{env_prefix}{python_exe()} -m ai_mem.userprompt_hook 2>/dev/null || true"
+    pretool_cmd = f"{env_prefix}{python_exe()} -m ai_mem.pretool_hook 2>/dev/null || true"
     posttool_cmd = f"{env_prefix}{python_exe()} -m ai_mem.posttool_hook 2>/dev/null || true"
 
     MCP_PERMISSIONS = [
@@ -220,6 +248,9 @@ def register_claude(workspace_root: str = ""):
 
         up_hooks = hooks.setdefault("UserPromptSubmit", [])
         _upsert_hook_command(up_hooks, "ai_mem.userprompt_hook", userprompt_cmd, timeout=8)
+
+        pre_hooks = hooks.setdefault("PreToolUse", [])
+        _upsert_hook_command(pre_hooks, "ai_mem.pretool_hook", pretool_cmd, timeout=5, matcher="Edit|Write")
 
         pt_hooks = hooks.setdefault("PostToolUse", [])
         _upsert_hook_command(pt_hooks, "ai_mem.posttool_hook", posttool_cmd, timeout=10, matcher="Write|Edit")

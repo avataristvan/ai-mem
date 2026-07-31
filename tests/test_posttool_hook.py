@@ -43,7 +43,6 @@ def _run_main(
         patch.object(hook, "_build_deps", return_value=query_uc),
         patch.object(hook, "detect_repo_context", return_value=ctx),
         patch.object(hook, "GLOBAL_COLLECTION", "global"),
-        patch.object(hook, "WORKSPACE_COLLECTION", "workspace"),
     ):
         tmp_path.mkdir(parents=True, exist_ok=True)
         captured = []
@@ -169,7 +168,6 @@ def test_query_exception_is_swallowed(tmp_path: Path) -> None:
         patch.object(hook, "_build_deps", return_value=query_uc),
         patch.object(hook, "detect_repo_context", return_value=ctx),
         patch.object(hook, "GLOBAL_COLLECTION", "global"),
-        patch.object(hook, "WORKSPACE_COLLECTION", "workspace"),
     ):
         tmp_path.mkdir(parents=True, exist_ok=True)
         captured = []
@@ -216,7 +214,6 @@ def test_configured_min_label_score_forwarded(tmp_path: Path) -> None:
         patch.object(hook, "_build_deps", return_value=query_uc),
         patch.object(hook, "detect_repo_context", return_value=ctx),
         patch.object(hook, "GLOBAL_COLLECTION", "global"),
-        patch.object(hook, "WORKSPACE_COLLECTION", "workspace"),
         patch("ai_mem.posttool_hook._load_settings", return_value={"min_label_score": 0.75}),
     ):
         tmp_path.mkdir(parents=True, exist_ok=True)
@@ -227,3 +224,51 @@ def test_configured_min_label_score_forwarded(tmp_path: Path) -> None:
         for c in query_uc.execute.call_args_list
     ]
     assert all(s == 0.75 for s in scores), f"expected 0.75, got {scores}"
+
+
+# ---------------------------------------------------------------------------
+# 8. Repo-scoped lookup gates on has_claude_md, not on collection membership
+# ---------------------------------------------------------------------------
+
+def test_repo_lookup_fires_when_workspace_collection_has_claude_md(tmp_path: Path) -> None:
+    """CLAUDE.md at the workspace root itself yields collection == WORKSPACE_COLLECTION
+    with has_claude_md == True — the repo-scoped signal must still fire in that case."""
+    query_uc = MagicMock()
+    query_uc.execute.return_value = []
+    ctx = MagicMock()
+    ctx.collection = "workspace"
+    ctx.has_claude_md = True
+
+    with (
+        patch.object(sys, "stdin", _payload()),
+        patch.object(hook, "DB_PATH", tmp_path),
+        patch.object(hook, "_build_deps", return_value=query_uc),
+        patch.object(hook, "detect_repo_context", return_value=ctx),
+        patch.object(hook, "GLOBAL_COLLECTION", "global"),
+    ):
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        hook.main()
+
+    collections_queried = [c.kwargs.get("collection") for c in query_uc.execute.call_args_list]
+    assert collections_queried.count("workspace") == 1
+
+
+def test_repo_lookup_skipped_when_not_has_claude_md(tmp_path: Path) -> None:
+    query_uc = MagicMock()
+    query_uc.execute.return_value = []
+    ctx = MagicMock()
+    ctx.collection = "workspace"
+    ctx.has_claude_md = False
+
+    with (
+        patch.object(sys, "stdin", _payload()),
+        patch.object(hook, "DB_PATH", tmp_path),
+        patch.object(hook, "_build_deps", return_value=query_uc),
+        patch.object(hook, "detect_repo_context", return_value=ctx),
+        patch.object(hook, "GLOBAL_COLLECTION", "global"),
+    ):
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        hook.main()
+
+    collections_queried = [c.kwargs.get("collection") for c in query_uc.execute.call_args_list]
+    assert "workspace" not in collections_queried

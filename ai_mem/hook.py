@@ -183,7 +183,12 @@ def main():
         collections = ListCollectionsUseCase(repo).execute()
         current_count = sum(col_info.count for col_info in collections)
 
-        repo_focus = _focus_text(get_memory, ctx.collection) if ctx.collection != WORKSPACE_COLLECTION else None
+        # Suppress the lookup only for the genuinely unscoped fallback (no CLAUDE.md
+        # anywhere). When CLAUDE.md lives at the workspace root itself, ctx.collection
+        # is still WORKSPACE_COLLECTION but has_claude_md is True — that's a real scope
+        # with its own current_focus, and comparing against WORKSPACE_COLLECTION alone
+        # produced a false "No focus entry found" warning even when one existed.
+        repo_focus = _focus_text(get_memory, ctx.collection) if ctx.has_claude_md else None
         global_focus = _focus_text(get_memory, GLOBAL_COLLECTION)
 
         expert_focus: str | None = None
@@ -206,7 +211,11 @@ def main():
 
         parts = []
         if repo_focus:
-            parts.append(f"[{ctx.scope_name} focus]\n{_truncate(repo_focus, _FOCUS_PREVIEW_CHARS)}")
+            # scope_name is None when CLAUDE.md sits at the workspace root itself
+            # (collection falls back to WORKSPACE_COLLECTION); fall back to the
+            # collection name so the label reads "[workspace focus]" instead of "[None focus]".
+            scope_label = ctx.scope_name or ctx.collection
+            parts.append(f"[{scope_label} focus]\n{_truncate(repo_focus, _FOCUS_PREVIEW_CHARS)}")
         if global_focus:
             parts.append(f"[global focus]\n{_truncate(global_focus, _FOCUS_PREVIEW_CHARS)}")
         if expert_focus or expert_entries:
@@ -223,7 +232,7 @@ def main():
                 f'Expert collection: "subagent.{agent_type}". '
                 f'Store cross-project learnings there with collection="subagent.{agent_type}".'
             )
-        if ctx.collection != WORKSPACE_COLLECTION:
+        if ctx.has_claude_md:
             _hc_exclude = {FOCUS_ID}
             _hc_entries = _high_confidence_entries(repo, ctx.collection, _hc_exclude)
             if _hc_entries:
@@ -233,7 +242,7 @@ def main():
                 )
         _now_ts = time.time()
         _expired: list = []
-        if ctx.collection != WORKSPACE_COLLECTION:
+        if ctx.has_claude_md:
             _expired.extend(_expired_entries(repo, ctx.collection, _now_ts))
         _expired.extend(_expired_entries(repo, GLOBAL_COLLECTION, _now_ts))
         if _expired:

@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from ai_mem.repo_context import GLOBAL_COLLECTION, WORKSPACE_COLLECTION, detect_repo_context
+from ai_mem.repo_context import GLOBAL_COLLECTION, detect_repo_context
 
 DB_PATH = Path(os.environ.get("AI_MEM_PATH", Path.home() / ".local" / "share" / "ai-mem"))
 _STATS_PATH = DB_PATH / "session_stats.json"
@@ -135,7 +135,7 @@ def main():
     dilemma_results = []
     try:
         ctx = detect_repo_context()
-        if ctx.collection not in (GLOBAL_COLLECTION, WORKSPACE_COLLECTION):
+        if ctx.has_claude_md:
             repo_collection = ctx.collection
             repo_results = _hits(query_uc, repo_collection, query)
             repo_hits = [result for result in repo_results if (result.score or 0.0) >= CONTEXT_MIN_SCORE]

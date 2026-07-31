@@ -65,7 +65,6 @@ def _run_main(
         patch.object(hook, "_build_deps", return_value=query_uc),
         patch.object(hook, "detect_repo_context", return_value=ctx),
         patch.object(hook, "GLOBAL_COLLECTION", "global"),
-        patch.object(hook, "WORKSPACE_COLLECTION", "workspace"),
     ):
         tmp_path.mkdir(parents=True, exist_ok=True)
         captured = []
@@ -449,3 +448,83 @@ def test_antipattern_without_affected_no_anticipation(tmp_path: Path) -> None:
     parsed = json.loads(out)
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
     assert "Anticipation" not in ctx
+
+
+# ---------------------------------------------------------------------------
+# 20. Repo-scoped lookup gates on has_claude_md, not on collection membership
+# ---------------------------------------------------------------------------
+
+def test_repo_lookup_fires_when_workspace_collection_has_claude_md(tmp_path: Path) -> None:
+    """CLAUDE.md at the workspace root itself yields collection == WORKSPACE_COLLECTION
+    with has_claude_md == True — the repo-scoped query must still fire in that case."""
+    global_results = [_make_result(0.9, "global memory")]
+    repo_results = [_make_result(0.85, "repo memory")]
+
+    query_uc = MagicMock()
+
+    def fake_hits(collection, query, n_results, type_filter=None, max_age_days=None):
+        if type_filter is not None:
+            return []
+        if collection == "global":
+            return global_results
+        return repo_results
+
+    query_uc.execute.side_effect = fake_hits
+
+    ctx = MagicMock()
+    ctx.collection = "workspace"
+    ctx.has_claude_md = True
+
+    with (
+        patch.object(sys, "stdin", _stdin_json()),
+        patch.object(hook, "DB_PATH", tmp_path),
+        patch.object(hook, "_build_deps", return_value=query_uc),
+        patch.object(hook, "detect_repo_context", return_value=ctx),
+        patch.object(hook, "GLOBAL_COLLECTION", "global"),
+    ):
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        captured = []
+        with patch("builtins.print", side_effect=lambda s: captured.append(s)):
+            hook.main()
+
+    out = "\n".join(captured)
+    parsed = json.loads(out)
+    ctx_text = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "repo memory" in ctx_text
+
+
+def test_repo_lookup_skipped_when_not_has_claude_md(tmp_path: Path) -> None:
+    global_results = [_make_result(0.9, "global memory")]
+    repo_results = [_make_result(0.85, "repo memory")]
+
+    query_uc = MagicMock()
+
+    def fake_hits(collection, query, n_results, type_filter=None, max_age_days=None):
+        if type_filter is not None:
+            return []
+        if collection == "global":
+            return global_results
+        return repo_results
+
+    query_uc.execute.side_effect = fake_hits
+
+    ctx = MagicMock()
+    ctx.collection = "workspace"
+    ctx.has_claude_md = False
+
+    with (
+        patch.object(sys, "stdin", _stdin_json()),
+        patch.object(hook, "DB_PATH", tmp_path),
+        patch.object(hook, "_build_deps", return_value=query_uc),
+        patch.object(hook, "detect_repo_context", return_value=ctx),
+        patch.object(hook, "GLOBAL_COLLECTION", "global"),
+    ):
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        captured = []
+        with patch("builtins.print", side_effect=lambda s: captured.append(s)):
+            hook.main()
+
+    out = "\n".join(captured)
+    parsed = json.loads(out)
+    ctx_text = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "repo memory" not in ctx_text

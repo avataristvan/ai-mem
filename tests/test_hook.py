@@ -62,6 +62,9 @@ def _run_main(
     expert_query_results: list | None = None,
     high_confidence_entries: list | None = None,
     expired_entries: list | None = None,
+    expired_entries_by_collection: dict[str, list] | None = None,
+    has_claude_md: bool = False,
+    scope_name: str = "test",
 ) -> str:
     """Run hook.main() with mocked dependencies; return captured stdout.
 
@@ -72,7 +75,18 @@ def _run_main(
     expert_query_results: list of mock entries returned by repo.query() for the expert
     collection. Use _make_entry(id, text) to build them. Default: empty list (MagicMock
     default iteration yields nothing).
+
+    expired_entries_by_collection: maps collection name -> entries returned by
+    _expired_entries for that specific collection, so tests can tell apart the
+    ctx.collection call from the unconditional GLOBAL_COLLECTION call. Takes
+    precedence over the flat `expired_entries` when given.
     """
+    if expired_entries_by_collection is not None:
+        def fake_expired_entries(repo, collection: str, now_ts: float) -> list:
+            return expired_entries_by_collection.get(collection, [])
+    else:
+        def fake_expired_entries(repo, collection: str, now_ts: float) -> list:
+            return expired_entries or []
     focus_map = focus_map or {}
 
     def fake_focus_text(get_memory_uc, collection: str) -> str | None:
@@ -86,7 +100,7 @@ def _run_main(
     mock_repo_instance.query.return_value = expert_query_results or []
 
     agent_ctx = _make_agent_ctx(agent_type, should_inject)
-    repo_ctx = _make_repo_ctx(collection=repo_collection)
+    repo_ctx = _make_repo_ctx(collection=repo_collection, has_claude_md=has_claude_md, scope_name=scope_name)
 
     stdin_stream = StringIO(json.dumps({"transcript_path": None}))
 
@@ -107,7 +121,7 @@ def _run_main(
         patch.object(hook, "WORKSPACE_COLLECTION", "workspace"),
         patch.object(hook, "ListCollectionsUseCase", mock_list_uc),
         patch.object(hook, "_high_confidence_entries", return_value=high_confidence_entries or []),
-        patch.object(hook, "_expired_entries", return_value=expired_entries or []),
+        patch.object(hook, "_expired_entries", side_effect=fake_expired_entries),
     ):
         tmp_path.mkdir(parents=True, exist_ok=True)
         captured: list[str] = []
@@ -325,6 +339,64 @@ def test_no_git_commits_suppresses_block(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Workspace-root CLAUDE.md — repo_focus lookup and "not found" warning accuracy
+# ---------------------------------------------------------------------------
+
+def test_workspace_focus_shown_when_claude_md_at_workspace_root(tmp_path: Path) -> None:
+    """CLAUDE.md at the workspace root → collection is still 'workspace' but
+    has_claude_md is True (see repo_context.py). A real current_focus entry there
+    must be displayed, not silently dropped."""
+    out = _run_main(
+        tmp_path,
+        repo_collection="workspace",
+        has_claude_md=True,
+        scope_name=None,
+        focus_map={"workspace": "Ship the launch checklist.", "global": "global mem"},
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "[workspace focus]" in ctx
+    assert "Ship the launch checklist." in ctx
+    assert "No focus entry found" not in ctx
+
+
+def test_workspace_not_found_warning_when_actually_missing(tmp_path: Path) -> None:
+    """When CLAUDE.md is at the workspace root but no current_focus entry exists yet,
+    the warning must still fire accurately."""
+    out = _run_main(
+        tmp_path,
+        repo_collection="workspace",
+        has_claude_md=True,
+        scope_name=None,
+        focus_map={"global": "global mem"},  # no "workspace" key → not found
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "No focus entry found" in ctx
+    assert "[workspace focus]" not in ctx
+
+
+def test_workspace_focus_suppressed_when_no_claude_md_anywhere(tmp_path: Path) -> None:
+    """Genuinely unscoped session (no CLAUDE.md found at all): repo_focus lookup
+    stays suppressed even if the 'workspace' collection happens to contain a
+    current_focus entry, and no warning is shown either (has_claude_md gates both)."""
+    out = _run_main(
+        tmp_path,
+        repo_collection="workspace",
+        has_claude_md=False,
+        focus_map={"workspace": "Should not surface here.", "global": "global mem"},
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "[workspace focus]" not in ctx
+    assert "Should not surface here." not in ctx
+    assert "No focus entry found" not in ctx
+
+
+# ---------------------------------------------------------------------------
 # 13. High-confidence proactive injection ([always-present] block)
 # ---------------------------------------------------------------------------
 
@@ -334,6 +406,7 @@ def test_high_confidence_entries_appear_in_always_present_block(tmp_path: Path) 
         tmp_path,
         focus_map={"global": "global mem"},
         repo_collection="repo.ai-mem",
+        has_claude_md=True,
         high_confidence_entries=[entry],
     )
 
@@ -368,6 +441,25 @@ def test_always_present_block_skipped_for_workspace_collection(tmp_path: Path) -
     parsed = json.loads(out)
     ctx = parsed["hookSpecificOutput"]["additionalContext"]
     assert "[always-present]" not in ctx
+
+
+def test_always_present_block_shown_for_workspace_collection_with_claude_md(tmp_path: Path) -> None:
+    """CLAUDE.md at the workspace root → collection is still 'workspace' but
+    has_claude_md is True. The gate must key off has_claude_md, not the collection
+    name, or this real scope's high-confidence entries get silently dropped."""
+    entry = _make_mem_entry("pattern_root", "Root-level pattern that should surface.")
+    out = _run_main(
+        tmp_path,
+        focus_map={"global": "global mem"},
+        repo_collection="workspace",
+        has_claude_md=True,
+        high_confidence_entries=[entry],
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "[always-present]" in ctx
+    assert "Root-level pattern that should surface." in ctx
 
 
 def test_high_confidence_gate_excludes_low_confidence_entry() -> None:
@@ -518,6 +610,27 @@ def test_expired_entries_helper_filters_by_now(tmp_path: Path) -> None:
     assert result[0].id == "old"
 
 
+def test_expired_block_shown_for_workspace_collection_with_claude_md(tmp_path: Path) -> None:
+    """CLAUDE.md at the workspace root → collection is still 'workspace' but
+    has_claude_md is True. Distinguishes the ctx.collection expired lookup from
+    the unconditional GLOBAL_COLLECTION lookup by only seeding entries under
+    'workspace': with the old collection-based gate this scope's own expired
+    entries would never be fetched at all."""
+    entry = _make_expired_entry("todo_root", "Root-scope task that expired", expires_at=1000.0)
+    out = _run_main(
+        tmp_path,
+        focus_map={"global": "global mem"},
+        repo_collection="workspace",
+        has_claude_md=True,
+        expired_entries_by_collection={"workspace": [entry], "global": []},
+    )
+
+    parsed = json.loads(out)
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    assert "[ai-mem expired]" in ctx
+    assert "todo_root" in ctx
+
+
 def test_always_present_text_truncated_to_high_confidence_chars(tmp_path: Path) -> None:
     long_text = "B" * 500  # well beyond _HIGH_CONFIDENCE_CHARS = 300
     entry = _make_mem_entry("pattern_long", long_text)
@@ -525,6 +638,7 @@ def test_always_present_text_truncated_to_high_confidence_chars(tmp_path: Path) 
         tmp_path,
         focus_map={"global": "global mem"},
         repo_collection="repo.ai-mem",
+        has_claude_md=True,
         high_confidence_entries=[entry],
     )
 
