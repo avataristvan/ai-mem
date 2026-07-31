@@ -75,6 +75,43 @@ def _run_main(
 
 
 # ---------------------------------------------------------------------------
+# 0. Short/low-content prompts are skipped before any query runs
+# ---------------------------------------------------------------------------
+
+def test_short_prompt_skipped_without_querying(tmp_path: Path) -> None:
+    results = [_make_result(0.99, "should never surface")]
+
+    out = _run_main(tmp_path, _stdin_json("ja, ablegen"), global_results=results)
+
+    assert out == ""
+
+
+def test_prompt_at_min_chars_boundary_is_queried(tmp_path: Path) -> None:
+    prompt = "x" * hook.MIN_QUERY_CHARS
+    results = [_make_result(0.9, "memory at boundary")]
+
+    out = _run_main(tmp_path, _stdin_json(prompt), global_results=results)
+
+    parsed = json.loads(out)
+    assert "memory at boundary" in parsed["hookSpecificOutput"]["additionalContext"]
+
+
+def test_prompt_one_under_min_chars_is_skipped(tmp_path: Path) -> None:
+    prompt = "x" * (hook.MIN_QUERY_CHARS - 1)
+    results = [_make_result(0.9, "should not surface")]
+
+    out = _run_main(tmp_path, _stdin_json(prompt), global_results=results)
+
+    assert out == ""
+
+
+def test_empty_prompt_skipped(tmp_path: Path) -> None:
+    out = _run_main(tmp_path, _stdin_json(""), global_results=[_make_result(0.9)])
+
+    assert out == ""
+
+
+# ---------------------------------------------------------------------------
 # 1. No output when all results are below CONTEXT_MIN_SCORE
 # ---------------------------------------------------------------------------
 

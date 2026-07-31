@@ -14,6 +14,7 @@ TOP_K = 3
 MAX_CHARS_PER_HIT = 300
 MAX_TOTAL_CHARS = 1500
 CONTEXT_MIN_SCORE = 0.3
+MIN_QUERY_CHARS = 15
 SESSION_TTL_HOURS = 4
 ANTIPATTERN_TOP_K = 2
 MAX_CHARS_PER_ANTIPATTERN = 200
@@ -118,7 +119,7 @@ def main():
         pass
 
     query = payload.get("prompt", "").strip()
-    if not query or not DB_PATH.exists():
+    if len(query) < MIN_QUERY_CHARS or not DB_PATH.exists():
         return
 
     try:
