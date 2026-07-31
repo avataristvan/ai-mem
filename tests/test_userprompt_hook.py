@@ -642,6 +642,21 @@ def test_antipattern_and_dilemma_ids_logged_under_repo_collection(tmp_path: Path
     assert {e["id"] for e in load_events(log, "repo.my-project")} == {"ap-1", "d-1"}
 
 
+# ---------------------------------------------------------------------------
+# 23. Regression: session_stats.json is written under the patched DB_PATH at
+# call time, not a module-level constant frozen at import time (the same bug
+# class the injection_log path had before it was fixed to compute inline).
+# ---------------------------------------------------------------------------
+
+def test_session_stats_written_under_patched_db_path(tmp_path: Path) -> None:
+    results = [_make_result(0.9, "above threshold")]
+
+    _run_main(tmp_path, _stdin_json(), global_results=results)
+
+    stats_file = tmp_path / "session_stats.json"
+    assert stats_file.exists()
+
+
 def test_repo_lookup_skipped_when_not_has_claude_md(tmp_path: Path) -> None:
     global_results = [_make_result(0.9, "global memory")]
     repo_results = [_make_result(0.85, "repo memory")]

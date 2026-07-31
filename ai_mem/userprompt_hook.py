@@ -10,7 +10,6 @@ from ai_mem.application.list_entries import title_of
 from ai_mem.repo_context import GLOBAL_COLLECTION, detect_repo_context
 
 DB_PATH = Path(os.environ.get("AI_MEM_PATH", Path.home() / ".local" / "share" / "ai-mem"))
-_STATS_PATH = DB_PATH / "session_stats.json"
 TOP_K = 3
 MAX_TOTAL_CHARS = 1500
 # STALE as of 2026-07-31 (later same day): BM25's residual min-max flooring (described below)
@@ -187,7 +186,7 @@ def main():
 
     try:
         from ai_mem.session_stats import record_injection
-        record_injection(_STATS_PATH, GLOBAL_COLLECTION, injected=bool(collected))
+        record_injection(DB_PATH / "session_stats.json", GLOBAL_COLLECTION, injected=bool(collected))
     except Exception:
         pass
 
