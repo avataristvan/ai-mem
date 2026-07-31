@@ -50,7 +50,10 @@ _dream = DreamMemoryUseCase(_repo)
 _split = SplitMemoryUseCase(_repo, _add)
 _add_edge = AddEdgeUseCase(_repo)
 _get_edges = GetEdgesUseCase(_repo)
-_get_memory = GetMemoryUseCase(_repo)
+# track_access here means "deliberate use": explicit mem_get by id, or a positive mem_boost
+# (the /reflect citation signal) -- see arch_decision_push_vs_pull_2026_07_31 chunk 3.
+_get_memory = GetMemoryUseCase(_repo, _track_access)
+_boost = BoostConfidenceUseCase(_repo, _track_access)
 _move = MoveMemoryUseCase(_repo)
 
 server = Server("ai-mem")
@@ -563,7 +566,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         col = arguments.get("collection") or DEFAULT_COLLECTION
         ids = arguments["ids"]
         delta = float(arguments["delta"])
-        boosted = BoostConfidenceUseCase(_repo).execute(col, ids, delta)
+        boosted = _boost.execute(col, ids, delta)
         return [types.TextContent(type="text", text=f"Boosted {boosted} entr{'y' if boosted == 1 else 'ies'} in '{col}'.")]
 
     raise ValueError(f"Unknown tool: {name}")

@@ -32,13 +32,19 @@ def _send(db_path: Path, payload: dict, timeout: float = 2.0) -> dict:
     return json.loads(b"".join(chunks).decode())
 
 
-def _wait_for_socket(db_path: Path, timeout: float = 2.0) -> None:
+def _wait_for_socket(db_path: Path, timeout: float = 5.0) -> None:
+    """Poll until the daemon actually answers a ping, not just until the socket file exists —
+    bind() creates the file before the daemon is necessarily scheduled to accept()/respond,
+    and under full-suite load (thread scheduling contention) that gap can exceed a short
+    fixed sleep. Retrying an end-to-end ping is what the caller actually needs to be true."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         if socket_path(db_path).exists():
-            return
+            resp = _send(db_path, {"op": "ping"}, timeout=0.5)
+            if resp is not None and resp.get("ok"):
+                return
         time.sleep(0.02)
-    raise TimeoutError("daemon socket never appeared")
+    raise TimeoutError("daemon socket never became ready")
 
 
 @pytest.fixture

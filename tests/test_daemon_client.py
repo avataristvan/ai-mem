@@ -11,15 +11,19 @@ from ai_mem.daemon_client import DaemonQueryClient, DaemonUnavailable, get_daemo
 from ai_mem.infrastructure.chroma_repository import ChromaMemoryRepository
 
 
-def _wait_for_socket(db_path: Path, timeout: float = 2.0) -> None:
+def _wait_for_socket(db_path: Path, timeout: float = 5.0) -> None:
+    """Poll until the daemon actually answers a ping, not just until the socket file exists —
+    see the identical helper in test_daemon.py for why file-existence alone isn't enough
+    under full-suite load."""
     import time
-    from ai_mem.daemon_protocol import socket_path
+    from ai_mem.daemon_client import _send
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if socket_path(db_path).exists():
+        resp = _send(db_path, {"op": "ping"}, timeout=0.5)
+        if resp is not None and resp.get("ok"):
             return
         time.sleep(0.02)
-    raise TimeoutError("daemon socket never appeared")
+    raise TimeoutError("daemon socket never became ready")
 
 
 def test_get_daemon_query_uc_returns_none_and_spawns_when_no_daemon(tmp_path: Path):
