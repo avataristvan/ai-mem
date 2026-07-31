@@ -31,6 +31,7 @@ config = [
 
 [project.scripts]
 mem-dream = "ai_mem.dream_cli:main"
+mem-view = "ai_mem.view_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
