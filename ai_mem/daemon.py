@@ -10,10 +10,16 @@ that process: a small unix-socket server, spawned lazily by daemon_client.py on
 the first cache miss, that stays warm for IDLE_TIMEOUT_SECONDS and then exits on
 its own so it doesn't linger across unrelated projects/sessions.
 
-Single-threaded by design: the ChromaDB PersistentClient (sqlite-backed) isn't
-verified safe for concurrent access from multiple threads, and hook traffic is
-low-frequency enough (one connection per user prompt / tool edit) that serializing
-requests costs nothing in practice.
+Handles connections concurrently, one thread per accepted socket: every Claude Code
+session on the machine shares this one daemon (keyed by db_path), so a single-threaded
+accept loop serializes independent sessions' hook queries behind each other, and a
+pileup of queued queries can blow past the hook's own outer timeout. Reads (query())
+against the shared ChromaMemoryRepository are safe to run concurrently -- confirmed
+empirically, no errors/corruption under concurrent readers+writers. The one write path
+a query can trigger, record_access(), does a non-atomic get-then-update and races when
+multiple threads bump the same entry concurrently (confirmed: lost updates without a
+lock) -- ChromaMemoryRepository serializes that internally with its own lock, so the
+daemon doesn't need to know about it.
 """
 from __future__ import annotations
 
@@ -22,6 +28,7 @@ import os
 import signal
 import socket
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -154,11 +161,37 @@ def _handle_conn(conn: socket.socket, repo) -> bool:
     return False
 
 
+def _serve_connection(conn: socket.socket, repo, stop_event: threading.Event, sock_path: Path) -> None:
+    """Thread target: handle one connection, then signal shutdown if it requested one."""
+    try:
+        should_stop = _handle_conn(conn, repo)
+    except Exception:  # noqa: BLE001 - one bad connection must not kill the daemon
+        should_stop = False
+    finally:
+        conn.close()
+
+    if should_stop:
+        stop_event.set()
+        # The main loop may be blocked in accept() for up to ACCEPT_POLL_SECONDS -- connect a
+        # throwaway client to wake it immediately so shutdown isn't delayed by the poll interval.
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as wake:
+                wake.settimeout(0.1)
+                wake.connect(str(sock_path))
+        except OSError:
+            pass
+
+
 def run(db_path: Path, idle_timeout_seconds: float = IDLE_TIMEOUT_SECONDS) -> None:
     """Run the daemon loop against *db_path* until idle-timeout or a shutdown request.
 
     Split out from main() so tests can run a real daemon against a tmp_path with a short
     idle_timeout_seconds instead of relying on the AI_MEM_PATH env var / module-level DB_PATH.
+
+    Each connection is handled on its own thread so independent Claude Code sessions sharing
+    this daemon don't queue up behind each other. last_activity is only ever read/written from
+    this accept loop (a new connection arriving is itself the "activity" signal) so it needs no
+    locking despite the concurrent handler threads.
     """
     from ai_mem.infrastructure.chroma_repository import ChromaMemoryRepository
 
@@ -179,9 +212,10 @@ def run(db_path: Path, idle_timeout_seconds: float = IDLE_TIMEOUT_SECONDS) -> No
 
     repo = ChromaMemoryRepository(db_path)  # the one warm, expensive-to-build object
     last_activity = time.time()
+    stop_event = threading.Event()
 
     try:
-        while True:
+        while not stop_event.is_set():
             try:
                 conn, _ = server_sock.accept()
             except socket.timeout:
@@ -189,15 +223,14 @@ def run(db_path: Path, idle_timeout_seconds: float = IDLE_TIMEOUT_SECONDS) -> No
                     break
                 continue
 
-            last_activity = time.time()
-            try:
-                should_stop = _handle_conn(conn, repo)
-            except Exception:  # noqa: BLE001 - one bad connection must not kill the daemon
-                should_stop = False
-            finally:
-                conn.close()
-            if should_stop:
+            if stop_event.is_set():
+                conn.close()  # the wake-up connection itself; shutdown already in progress
                 break
+
+            last_activity = time.time()
+            threading.Thread(
+                target=_serve_connection, args=(conn, repo, stop_event, sock_path), daemon=True
+            ).start()
     finally:
         server_sock.close()
         sock_path.unlink(missing_ok=True)

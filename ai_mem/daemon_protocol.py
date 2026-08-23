@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 IDLE_TIMEOUT_SECONDS = 1800
 ACCEPT_POLL_SECONDS = 5
 CONNECT_TIMEOUT_SECONDS = 0.15

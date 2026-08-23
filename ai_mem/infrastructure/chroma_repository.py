@@ -2,15 +2,19 @@
 from __future__ import annotations
 
 import json
+import threading
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 
 import chromadb
+from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
 from ai_mem.domain.memory import CollectionInfo, MemoryEdge, MemoryEntry, QueryResult
 
 
 _PERMANENT_TYPES = {"pattern", "anti-pattern"}
+_EMBEDDING_CACHE_MAXSIZE = 128
 
 
 def _parse_edges(raw: str) -> list[MemoryEdge]:
@@ -29,10 +33,79 @@ def _exclude_patterns(result: dict) -> list[str]:
     return [id_ for id_, meta in zip(ids, metas) if (meta or {}).get("type") not in _PERMANENT_TYPES]
 
 
+class _EmbeddingCache:
+    """LRU-bounded cache of query text -> embedding vector, with per-key locking.
+
+    Embedding a query costs ~150-250ms (ONNX inference) regardless of how "warm" the
+    process is -- it's per-call cost, not a one-time model-load cost. userprompt_hook's
+    4-way fan-out (global + repo context + antipattern + dilemma) queries the exact same
+    prompt text up to 4 times, so without this cache the same text gets embedded up to
+    4x per hook call. Cached by text alone, not (collection, text): every collection in
+    this codebase uses the same DefaultEmbeddingFunction (verified: no collection is ever
+    created with an explicit embedding_function), so the same text always embeds to the
+    same vector regardless of which collection it's queried against.
+
+    Per-key locking (not one lock guarding the whole cache) means only genuinely-duplicate
+    in-flight requests for the *same* text block each other -- concurrent requests for
+    different text proceed fully in parallel, same as the daemon's per-connection threading.
+    The first thread for a given text computes and caches; others waiting on that text's
+    lock reuse the result instead of recomputing.
+    """
+
+    def __init__(self, maxsize: int = _EMBEDDING_CACHE_MAXSIZE) -> None:
+        self._maxsize = maxsize
+        self._cache: OrderedDict[str, list[float]] = OrderedDict()
+        self._guard = threading.Lock()
+        self._pending: dict[str, threading.Lock] = {}
+
+    def get_or_compute(self, text, compute) -> list[float]:
+        with self._guard:
+            cached = self._cache.get(text)
+            if cached is not None:
+                self._cache.move_to_end(text)
+                return cached
+            key_lock = self._pending.setdefault(text, threading.Lock())
+
+        with key_lock:
+            with self._guard:
+                cached = self._cache.get(text)
+                if cached is not None:  # another thread computed it while we waited
+                    self._cache.move_to_end(text)
+                    return cached
+
+            try:
+                vector = compute(text)
+            finally:
+                with self._guard:
+                    self._pending.pop(text, None)
+
+            with self._guard:
+                self._cache[text] = vector
+                self._cache.move_to_end(text)
+                if len(self._cache) > self._maxsize:
+                    self._cache.popitem(last=False)
+
+        return vector
+
+
 class ChromaMemoryRepository:
     def __init__(self, db_path: Path) -> None:
         db_path.mkdir(parents=True, exist_ok=True)
         self._client = chromadb.PersistentClient(path=str(db_path))
+        # record_access does a read-modify-write (get, bump access_count, update) that races
+        # when the same entry is hit by concurrent callers (e.g. the daemon serving multiple
+        # connections at once) -- confirmed empirically: 8 threads x 20 unlocked increments on
+        # the same id landed at ~32 instead of 160. Only this method needs the lock; the daemon
+        # never calls upsert/delete, and query()/get_by_ids() are pure reads.
+        self._write_lock = threading.Lock()
+        # Own embedding function instance rather than reaching into a collection's private
+        # `_embedding_function` -- constructing DefaultEmbeddingFunction() is near-free (model
+        # load is lazy, happens on first __call__, and isn't duplicated per instance; confirmed
+        # empirically: a second instance's first call costs the same as any other call, not a
+        # second cold-load). This lets query() request an embedding before touching a specific
+        # collection at all, which is what makes the cache collection-agnostic.
+        self._embedding_function = DefaultEmbeddingFunction()
+        self._embedding_cache = _EmbeddingCache()
 
     def _col(self, name: str):
         return self._client.get_or_create_collection(name)
@@ -78,7 +151,8 @@ class ChromaMemoryRepository:
         elif len(conditions) > 1:
             where = {"$and": conditions}
 
-        kwargs: dict = {"query_texts": [text], "n_results": min(n_results, count)}
+        embedding = self._embedding_cache.get_or_compute(text, lambda t: self._embedding_function([t])[0])
+        kwargs: dict = {"query_embeddings": [embedding], "n_results": min(n_results, count)}
         if where:
             kwargs["where"] = where
 
@@ -146,21 +220,22 @@ class ChromaMemoryRepository:
         if col is None:
             return
 
-        existing = col.get(ids=ids)
-        existing_ids = existing.get("ids") or []
-        existing_metas = existing.get("metadatas") or []
-        if not existing_ids:
-            return
+        with self._write_lock:
+            existing = col.get(ids=ids)
+            existing_ids = existing.get("ids") or []
+            existing_metas = existing.get("metadatas") or []
+            if not existing_ids:
+                return
 
-        now_ts = datetime.now(tz=timezone.utc).timestamp()
-        new_metas = []
-        for meta in existing_metas:
-            meta_copy = dict(meta or {})
-            meta_copy["last_accessed_at"] = now_ts
-            meta_copy["access_count"] = int(meta_copy.get("access_count", 0)) + 1
-            new_metas.append(meta_copy)
+            now_ts = datetime.now(tz=timezone.utc).timestamp()
+            new_metas = []
+            for meta in existing_metas:
+                meta_copy = dict(meta or {})
+                meta_copy["last_accessed_at"] = now_ts
+                meta_copy["access_count"] = int(meta_copy.get("access_count", 0)) + 1
+                new_metas.append(meta_copy)
 
-        col.update(ids=existing_ids, metadatas=new_metas)
+            col.update(ids=existing_ids, metadatas=new_metas)
 
     def get_all(self, collection: str) -> list[MemoryEntry]:
         col = self._safe_get_collection(collection)

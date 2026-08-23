@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -158,23 +159,34 @@ def main():
     except Exception:
         return
 
-    global_results = _hits(query_uc, GLOBAL_COLLECTION, query)
-    global_hits = [result for result in global_results if (result.score or 0.0) >= CONTEXT_MIN_SCORE]
-
-    repo_hits = []
     repo_collection = None
-    antipattern_results = []
-    dilemma_results = []
     try:
         ctx = detect_repo_context()
         if ctx.has_claude_md:
             repo_collection = ctx.collection
-            repo_results = _hits(query_uc, repo_collection, query)
-            repo_hits = [result for result in repo_results if (result.score or 0.0) >= CONTEXT_MIN_SCORE]
-            antipattern_results = _antipattern_hits(query_uc, repo_collection, query)
-            dilemma_results = _dilemma_hits(query_uc, repo_collection, query)
     except Exception:
         pass
+
+    # The 4 queries below are independent (different type_filter/collection args, no data
+    # dependency between them) and each already swallows its own exceptions, returning [] —
+    # safe to fan out concurrently to cut round-trip latency instead of paying for each
+    # sequentially.
+    repo_results, antipattern_results, dilemma_results = [], [], []
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        global_future = executor.submit(_hits, query_uc, GLOBAL_COLLECTION, query)
+        if repo_collection:
+            repo_future = executor.submit(_hits, query_uc, repo_collection, query)
+            antipattern_future = executor.submit(_antipattern_hits, query_uc, repo_collection, query)
+            dilemma_future = executor.submit(_dilemma_hits, query_uc, repo_collection, query)
+
+        global_results = global_future.result()
+        if repo_collection:
+            repo_results = repo_future.result()
+            antipattern_results = antipattern_future.result()
+            dilemma_results = dilemma_future.result()
+
+    global_hits = [result for result in global_results if (result.score or 0.0) >= CONTEXT_MIN_SCORE]
+    repo_hits = [result for result in repo_results if (result.score or 0.0) >= CONTEXT_MIN_SCORE]
 
     if not global_hits and not repo_hits and not antipattern_results and not dilemma_results:
         return

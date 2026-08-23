@@ -151,6 +151,37 @@ def test_stop_daemon_returns_false_when_nothing_running(tmp_path: Path):
     assert daemon.stop_daemon(tmp_path / "chroma") is False
 
 
+def test_concurrent_connections_are_not_serialized(running_daemon: Path) -> None:
+    """Two connections handled at once must overlap, not queue behind each other --
+    the whole point of moving off the single-threaded accept-handle-close loop."""
+    n_conns = 3
+    delay = 0.3
+
+    def slow_handle_query(repo, payload):
+        time.sleep(delay)
+        return {"ok": True, "results": []}
+
+    results = [None] * n_conns
+
+    def worker(idx: int) -> None:
+        results[idx] = _send(running_daemon, {"op": "query", "collection": "global", "query": "x"})
+
+    with patch.object(daemon, "_handle_query", side_effect=slow_handle_query):
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_conns)]
+        start = time.time()
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5.0)
+        elapsed = time.time() - start
+
+    assert all(r is not None and r["ok"] for r in results)
+    # Serialized, this would take n_conns * delay (~0.9s); concurrent, ~delay (~0.3s) plus
+    # scheduling slack. The threshold sits well below the serialized time to catch a regression
+    # to single-threaded handling without being sensitive to normal scheduling jitter.
+    assert elapsed < n_conns * delay * 0.75
+
+
 def test_stop_daemon_via_pid_fallback_when_socket_stale(tmp_path: Path):
     """A daemon that dies without cleaning up (e.g. killed by signal) leaves a stale,
     unconnectable socket file; stop_daemon must fall back to killing the recorded pid."""
