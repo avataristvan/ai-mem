@@ -84,7 +84,7 @@ async def list_tools() -> list[types.Tool]:
                     "collection": {"type": "string", "description": f"Collection name (default: '{DEFAULT_COLLECTION}')"},
                     "metadatas": {"type": "array", "items": {"type": "object"}, "description": "Optional metadata per entry"},
                     "ttl_days": {"type": "number", "description": "Optional TTL in days — entry is deleted by mem_cleanup after expiry"},
-                    "type": {"type": "string", "description": "Optional entry type tag (e.g. 'feedback', 'reference', 'project', 'user', 'anti-pattern', 'dilemma') for later filtering. For type='anti-pattern', use this mandatory structure: 'Tried: <approach>\\nFailed because: <reason>\\nInstead: <alternative>'. When the anti-pattern involves human stakeholders (people treated as variables, trust broken, social dynamics), add: 'Affected: <who was affected and how>'. For type='dilemma' (genuine value conflicts with no single correct answer, e.g. across cultures), use: 'Tension: <value A> vs. <value B>\\nContext A: <when value A applies and why>\\nContext B: <when value B applies and why>\\nAffected A: <who, how — from frame A>\\nAffected B: <who, how — from frame B>\\nQuestions: <what to ask to determine which context applies>'. Dilemmas encode the tension itself and the right questions, not a resolved answer."},
+                    "type": {"type": "string", "description": "Optional entry type tag (e.g. 'feedback', 'reference', 'project', 'user', 'anti-pattern', 'dilemma', 'domain') for later filtering. For type='anti-pattern', use this mandatory structure: 'Tried: <approach>\\nFailed because: <reason>\\nInstead: <alternative>'. When the anti-pattern involves human stakeholders (people treated as variables, trust broken, social dynamics), add: 'Affected: <who was affected and how>'. For type='dilemma' (genuine value conflicts with no single correct answer, e.g. across cultures), use: 'Tension: <value A> vs. <value B>\\nContext A: <when value A applies and why>\\nContext B: <when value B applies and why>\\nAffected A: <who, how — from frame A>\\nAffected B: <who, how — from frame B>\\nQuestions: <what to ask to determine which context applies>'. Dilemmas encode the tension itself and the right questions, not a resolved answer. For type='domain' (business/domain knowledge — why a rule exists, a domain constraint, a business decision behind the code — not a coding technique), use: 'Decision: <what was decided or is true>\\nWhy: <business/domain reason>\\nScope: <where/when this applies>'. Store domain entries as soon as the knowledge surfaces during coding, not only at end-of-session reflection — the insight is easy to lose otherwise."},
                 },
                 "required": ["documents", "ids"],
             },
@@ -142,7 +142,7 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="mem_topics",
             description=(
-                "Browse a collection's entries grouped by type (pattern, anti-pattern, project, fact, "
+                "Browse a collection's entries grouped by type (pattern, anti-pattern, project, fact, domain, "
                 "feedback, reference, dilemma, or 'untyped') — the rung between mem_list's flat {id, title} "
                 "dump and mem_get's full text. Use this instead of mem_list when a collection is large enough "
                 "that a flat list is unwieldy, or when you want to browse by category first."

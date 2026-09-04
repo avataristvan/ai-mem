@@ -4,7 +4,7 @@
 Mirrors the list_tool_categories -> list_tools_in_category -> get_tool_signature
 pattern (see arch_redesign_sketch_pull_based_2026_07_31 in repo.ai-mem): mem_topics is
 the "list_tools_in_category" rung, grouping by the 'type' metadata field that already
-exists on every entry (pattern/anti-pattern/project/fact/feedback/reference/dilemma).
+exists on every entry (pattern/anti-pattern/domain/project/fact/feedback/reference/dilemma).
 """
 from __future__ import annotations
 

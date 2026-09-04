@@ -27,11 +27,15 @@ _TYPE_RULES = """\
 TYPE RULES — apply these strictly:
 - "pattern": a reusable rule or best practice. Canonical format: Rule: / When: / Why:
 - "anti-pattern": a documented failure mode. Canonical format: Tried: / Failed because: / Instead:
+- "domain": business/domain knowledge (why a rule exists, a domain constraint) — not a coding \
+technique. Canonical format: Decision: / Why: / Scope:
 - "feedback", "project", "reference", "user": descriptive entries — no fixed format.
 
 Consolidation constraints:
 - NEVER propose MERGE between a "pattern" and an "anti-pattern". They contradict by design. \
 If they share an edge (shown in metadata), verify the relationship is accurate — do not collapse it.
+- NEVER propose MERGE between a "domain" entry and a "pattern"/"anti-pattern" entry — domain \
+knowledge and coding technique are different axes even when they discuss the same code.
 - Entries with access_count ≥ 5 are load-bearing (frequently retrieved). \
 Avoid DELETE or MERGE unless clearly redundant.
 - If two entries share an edge, the edge makes both necessary. \

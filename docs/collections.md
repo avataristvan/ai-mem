@@ -13,6 +13,22 @@
 
 The collection name is derived from the git remote URL slug or directory name.
 
+## Entry Types
+
+The optional `type` metadata field on `mem_add` tags an entry for filtering (`mem_query(type=...)`, `mem_topics`) and for `mem-dream`'s consolidation rules. Canonical types, each with a fixed structure enforced by convention (not schema validation):
+
+| Type | Structure | Use for |
+|---|---|---|
+| `pattern` | `Rule: / When: / Why:` | A reusable technique or best practice |
+| `anti-pattern` | `Tried: / Failed because: / Instead:` | A documented failure mode |
+| `dilemma` | `Tension: / Context A: / Context B: / Affected A: / Affected B: / Questions:` | A genuine value conflict with no single correct answer |
+| `domain` | `Decision: / Why: / Scope:` | Business/domain knowledge — why a rule exists, a domain constraint — as opposed to a coding technique |
+| `feedback`, `project`, `reference`, `user` | free-form | Descriptive entries, no fixed structure |
+
+`domain` entries should be written as soon as the knowledge surfaces during coding, not deferred to an end-of-session reflection step — that kind of insight is easy to lose if it isn't captured immediately. There's no hook that forces this (recognizing a domain decision requires semantic judgment a deterministic hook can't reliably make); it's agent discipline, reinforced by the `type` description on `mem_add` itself and by the `knowledge_architecture_framework` entry in the `global` collection.
+
+`mem-dream` never merges a `pattern`/`anti-pattern` entry with a `domain` entry — technique and business rationale are different axes even when they discuss the same code.
+
 ## Special Entries
 
 - **`current_focus`** (id `"current_focus"`) — primary context entry per collection; the SessionStart hook injects it as `[scope focus]` text
